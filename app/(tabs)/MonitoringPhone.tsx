@@ -5,6 +5,7 @@ import { collection, getDocs, query, getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { app } from '../../firebase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 // Initialize Firebase
 const db = getFirestore(app);
@@ -24,6 +25,7 @@ interface Task {
 }
 
 export default function MonitoringPhone() {
+  const router = useRouter();
   const insets = useSafeAreaInsets ? useSafeAreaInsets() : { bottom: 0 };
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,7 @@ export default function MonitoringPhone() {
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [filterFrequencies, setFilterFrequencies] = useState<string[]>([]);
   const [userDisplayName, setUserDisplayName] = useState<string | null>(null);
+  const [userPhone, setUserPhone] = useState<string | null>(null);
 
   // Helper: frequency options
   const frequencyOptions = [
@@ -128,6 +131,11 @@ export default function MonitoringPhone() {
           } else {
             setUserDisplayName('You');
           }
+          if (data.phoneNumber || user.phoneNumber) {
+            setUserPhone(data.phoneNumber || user.phoneNumber);
+          } else {
+            setUserPhone(null);
+          }
           console.log('User roles (union):', userRoles);
         }
       }
@@ -198,40 +206,49 @@ export default function MonitoringPhone() {
     }
   };
 
-  const renderTask = ({ item }: { item: Task }) => (
-    <View style={styles.taskCard}>
-      <View style={styles.taskHeader}>
-        <Text style={styles.taskTitle}>{item.title || 'Untitled Task'}</Text>
-        <View style={[styles.taskTypeBadge, { backgroundColor: getTaskTypeColor(item.type) }]}>
-          <Text style={styles.taskTypeText}>
-            {item.type === 'teamMember' ? (userDisplayName || 'You') : item.type.charAt(0).toUpperCase() + item.type.slice(1)}
+  const renderTask = ({ item }: { item: Task }) => {
+    let screen = '';
+    if (item.type === 'detailed') screen = '/task-screens/DetailTaskScreen';
+    else if (item.type === 'checklist') screen = '/task-screens/ChecklistTaskScreen';
+    else if (item.type === 'teamMember') screen = '/task-screens/PersonalTaskScreen';
+    return (
+      <TouchableOpacity
+        style={styles.taskCard}
+        activeOpacity={0.8}
+        onPress={() => router.push({ pathname: screen, params: { task: JSON.stringify(item) } })}
+      >
+        <View style={styles.taskHeader}>
+          <Text style={styles.taskTitle}>{item.title || 'Untitled Task'}</Text>
+          <View style={[styles.taskTypeBadge, { backgroundColor: getTaskTypeColor(item.type) }]}> 
+            <Text style={styles.taskTypeText}>
+              {item.type === 'teamMember'
+                ? `${userDisplayName || 'You'}${userPhone ? ` (${userPhone})` : ''}`
+                : item.type.charAt(0).toUpperCase() + item.type.slice(1)}
+            </Text>
+          </View>
+        </View>
+        {item.description && (
+          <Text style={styles.taskDescription}>{item.description}</Text>
+        )}
+        <View style={styles.taskDetails}>
+          {item.dueDate && (
+            <Text style={styles.taskDetail}>📅 Due: {formatDate(item.dueDate)}</Text>
+          )}
+          {item.frequency && (
+            <Text style={styles.taskDetail}>🔄 Frequency: {item.frequency}</Text>
+          )}
+          {item.assignedTo && (
+            <Text style={styles.taskDetail}>👤 Assigned: {item.assignedTo}</Text>
+          )}
+        </View>
+        <View style={styles.taskStatus}>
+          <Text style={[styles.statusText, { color: item.completed ? '#4CAF50' : '#FF9800' }]}> 
+            {item.completed ? '✅ Completed' : '⏳ Pending'}
           </Text>
         </View>
-      </View>
-      
-      {item.description && (
-        <Text style={styles.taskDescription}>{item.description}</Text>
-      )}
-      
-      <View style={styles.taskDetails}>
-        {item.dueDate && (
-          <Text style={styles.taskDetail}>📅 Due: {formatDate(item.dueDate)}</Text>
-        )}
-        {item.frequency && (
-          <Text style={styles.taskDetail}>🔄 Frequency: {item.frequency}</Text>
-        )}
-        {item.assignedTo && (
-          <Text style={styles.taskDetail}>👤 Assigned: {item.assignedTo}</Text>
-        )}
-      </View>
-      
-      <View style={styles.taskStatus}>
-        <Text style={[styles.statusText, { color: item.completed ? '#4CAF50' : '#FF9800' }]}>
-          {item.completed ? '✅ Completed' : '⏳ Pending'}
-        </Text>
-      </View>
-    </View>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   const getTaskTypeColor = (type: string) => {
     switch (type) {
