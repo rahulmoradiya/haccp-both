@@ -1,80 +1,74 @@
-import { Image } from 'expo-image';
-import { Button, Platform, StyleSheet } from 'react-native';
-
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
-import { useAuth } from '../_layout';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator, FlatList } from 'react-native';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { app } from '../../firebase';
 
 export default function HomeScreen() {
-  const { logout } = useAuth();
+  const [titles, setTitles] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // TODO: Replace with dynamic companyCode if needed
+  const companyCode = 'dcfd1b0a';
+  const docId = '3ZrWUH4ZeLpDJ8tPiPLa';
+
+  useEffect(() => {
+    const fetchChecklistTitles = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const db = getFirestore(app);
+        const ref = doc(db, 'companies', companyCode, 'checklistCreation', docId);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data();
+          const checklist = Array.isArray(data.checklist) ? data.checklist : [];
+          setTitles(checklist.map((item: any) => item.title || ''));
+        } else {
+          setError('Document not found');
+        }
+      } catch (e) {
+        setError('Error fetching checklist document');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchChecklistTitles();
+  }, [companyCode, docId]);
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Button title="Logout" onPress={logout} />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+    <View style={styles.container}>
+      <Text style={styles.title}>Test</Text>
+      {loading && <ActivityIndicator size="large" color="#1976D2" style={{ marginTop: 24 }} />}
+      {error ? <Text style={{ color: 'red', marginTop: 16 }}>{error}</Text> : null}
+      <FlatList
+        data={titles}
+        keyExtractor={(_, idx) => idx.toString()}
+        renderItem={({ item }) => (
+          <Text style={styles.item}>{item}</Text>
+        )}
+        style={{ marginTop: 24, width: '100%' }}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
+  container: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    backgroundColor: '#fff',
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#1976D2',
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  item: {
+    fontSize: 18,
+    color: '#333',
+    paddingVertical: 8,
+    textAlign: 'center',
   },
 });

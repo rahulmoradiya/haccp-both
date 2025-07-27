@@ -148,11 +148,11 @@ export default function MonitoringPhone() {
         const data = doc.data();
         // Filter by assignedRoles
         if (Array.isArray(data.assignedRoles) && userRoles.some(role => data.assignedRoles.includes(role))) {
-          allTasks.push({
-            id: doc.id,
+        allTasks.push({
+          id: doc.id,
             ...data,
-            type: 'detailed'
-          } as Task);
+          type: 'detailed'
+        } as Task);
         }
         console.log('Detailed task', doc.id, 'assignedRoles:', data.assignedRoles);
       });
@@ -165,11 +165,11 @@ export default function MonitoringPhone() {
         const data = doc.data();
         // Filter by assignedRoles
         if (Array.isArray(data.assignedRoles) && userRoles.some(role => data.assignedRoles.includes(role))) {
-          allTasks.push({
-            id: doc.id,
+        allTasks.push({
+          id: doc.id,
             ...data,
-            type: 'checklist'
-          } as Task);
+          type: 'checklist'
+        } as Task);
         }
         console.log('Checklist task', doc.id, 'assignedRoles:', data.assignedRoles);
       });
@@ -186,11 +186,11 @@ export default function MonitoringPhone() {
         console.log('teamMemberTask doc id:', doc.id, 'assignedUserIds:', data.assignedUserIds);
         // Only include if assignedUserIds contains the current user's UID
         if (user && Array.isArray(data.assignedUserIds) && data.assignedUserIds.includes(user.uid)) {
-          allTasks.push({
-            id: doc.id,
+        allTasks.push({
+          id: doc.id,
             ...data,
-            type: 'teamMember'
-          } as Task);
+          type: 'teamMember'
+        } as Task);
           filteredTeamTasks++;
         }
       });
@@ -217,9 +217,9 @@ export default function MonitoringPhone() {
         activeOpacity={0.8}
         onPress={() => router.push({ pathname: screen, params: { task: JSON.stringify(item) } })}
       >
-        <View style={styles.taskHeader}>
-          <Text style={styles.taskTitle}>{item.title || 'Untitled Task'}</Text>
-          <View style={[styles.taskTypeBadge, { backgroundColor: getTaskTypeColor(item.type) }]}> 
+      <View style={styles.taskHeader}>
+        <Text style={styles.taskTitle}>{item.title || 'Untitled Task'}</Text>
+        <View style={[styles.taskTypeBadge, { backgroundColor: getTaskTypeColor(item.type) }]}>
             <Text style={styles.taskTypeText}>
               {item.type === 'teamMember'
                 ? `${userDisplayName || 'You'}${userPhone ? ` (${userPhone})` : ''}`
@@ -227,27 +227,27 @@ export default function MonitoringPhone() {
             </Text>
           </View>
         </View>
-        {item.description && (
-          <Text style={styles.taskDescription}>{item.description}</Text>
+      {item.description && (
+        <Text style={styles.taskDescription}>{item.description}</Text>
+      )}
+      <View style={styles.taskDetails}>
+        {item.dueDate && (
+          <Text style={styles.taskDetail}>📅 Due: {formatDate(item.dueDate)}</Text>
         )}
-        <View style={styles.taskDetails}>
-          {item.dueDate && (
-            <Text style={styles.taskDetail}>📅 Due: {formatDate(item.dueDate)}</Text>
-          )}
-          {item.frequency && (
-            <Text style={styles.taskDetail}>🔄 Frequency: {item.frequency}</Text>
-          )}
-          {item.assignedTo && (
-            <Text style={styles.taskDetail}>👤 Assigned: {item.assignedTo}</Text>
-          )}
-        </View>
-        <View style={styles.taskStatus}>
-          <Text style={[styles.statusText, { color: item.completed ? '#4CAF50' : '#FF9800' }]}> 
-            {item.completed ? '✅ Completed' : '⏳ Pending'}
-          </Text>
-        </View>
+        {item.frequency && (
+          <Text style={styles.taskDetail}>🔄 Frequency: {item.frequency}</Text>
+        )}
+        {item.assignedTo && (
+          <Text style={styles.taskDetail}>👤 Assigned: {item.assignedTo}</Text>
+        )}
+      </View>
+      <View style={styles.taskStatus}>
+        <Text style={[styles.statusText, { color: item.completed ? '#4CAF50' : '#FF9800' }]}>
+          {item.completed ? '✅ Completed' : '⏳ Pending'}
+        </Text>
+      </View>
       </TouchableOpacity>
-    );
+  );
   };
 
   const getTaskTypeColor = (type: string) => {
