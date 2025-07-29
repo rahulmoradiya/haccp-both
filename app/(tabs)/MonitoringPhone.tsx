@@ -85,16 +85,23 @@ export default function MonitoringPhone() {
     if (companyCode) {
       fetchTasks();
     }
-    // On mount, select today's date
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const dd = String(today.getDate()).padStart(2, '0');
-    const todayString = `${yyyy}-${mm}-${dd}`;
-    setSelectedDate(todayString);
-    setFilteredTasks(getTasksForDate(todayString));
-    setCalendarMonth(today);
   }, [companyCode]);
+
+  // Set today's date when tasks are loaded
+  useEffect(() => {
+    if (tasks.length > 0 && selectedDate === null) {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const todayString = `${yyyy}-${mm}-${dd}`;
+      setSelectedDate(todayString);
+      const todayTasks = getTasksForDate(todayString);
+      setFilteredTasks(todayTasks);
+      setCalendarMonth(today);
+      console.log('✅ Set today\'s date:', todayString, 'with', todayTasks.length, 'tasks');
+    }
+  }, [tasks, selectedDate]);
 
   const fetchTasks = async () => {
     if (!companyCode) return;
@@ -334,6 +341,7 @@ export default function MonitoringPhone() {
   // Filter tasks by selected frequencies
   const getFilteredTasks = () => {
     let base = filteredTasks !== null ? filteredTasks : tasks;
+    console.log('🔍 getFilteredTasks - filteredTasks:', filteredTasks?.length, 'tasks:', tasks.length, 'filterFrequencies:', filterFrequencies);
     if (filterFrequencies.length === 0) return base;
     // If 'for-you' is selected, show only teamMemberTasks assigned to the current user
     if (filterFrequencies.includes('for-you')) {
@@ -439,6 +447,13 @@ export default function MonitoringPhone() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <Text style={styles.screenTitle}>Monitoring Hub</Text>
+      {selectedDate && (
+        <View style={styles.selectedDateContainer}>
+          <Text style={styles.selectedDateText}>
+            Tasks for {new Date(selectedDate).toLocaleDateString()}
+          </Text>
+        </View>
+      )}
       <TouchableOpacity onPress={() => setShowCalendar(!showCalendar)} style={styles.calendarToggle}>
         <Text style={styles.calendarToggleText}>{showCalendar ? 'Hide Calendar' : 'Show Calendar'}</Text>
       </TouchableOpacity>
@@ -823,5 +838,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 10,
     marginTop: 4,
+  },
+  selectedDateContainer: {
+    backgroundColor: '#E3F2FD',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  selectedDateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1976D2',
   },
 });

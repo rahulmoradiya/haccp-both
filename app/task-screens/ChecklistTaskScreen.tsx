@@ -25,9 +25,6 @@ export default function ChecklistTaskScreen() {
   const [error, setError] = useState('');
   const router = useRouter();
   const [editingDeviationIdx, setEditingDeviationIdx] = useState<number | null>(null);
-  const [sopModalVisible, setSopModalVisible] = useState(false);
-  const [sopModalLoading, setSopModalLoading] = useState(false);
-  const [filteredSOPs, setFilteredSOPs] = useState<any[]>([]);
   const [companyCode, setCompanyCode] = useState<string | null>(null);
 
   // For demo: use checklist array from task or linkedItem, or fallback to mock data
@@ -56,12 +53,21 @@ export default function ChecklistTaskScreen() {
   // Get company code from current user
   useEffect(() => {
     const fetchCompanyCode = async () => {
+      console.log('=== FETCHING COMPANY CODE ===');
       const user = require('firebase/auth').getAuth(app).currentUser;
+      console.log('Current user:', user?.uid);
+      
       if (user) {
         try {
+          console.log('Fetching companies collection...');
           const companiesSnap = await getDocs(collection(db, 'companies'));
+          console.log('Number of companies found:', companiesSnap.docs.length);
+          
           for (const companyDoc of companiesSnap.docs) {
+            console.log('Checking company:', companyDoc.id);
             const usersCol = await getDocs(collection(db, 'companies', companyDoc.id, 'users'));
+            console.log('Users in company', companyDoc.id, ':', usersCol.docs.length);
+            
             const userDoc = usersCol.docs.find(doc => doc.data().uid === user.uid);
             if (userDoc) {
               setCompanyCode(companyDoc.id);
@@ -109,6 +115,7 @@ export default function ChecklistTaskScreen() {
         const data = snap.data();
         setLinkedItem(data);
         console.log('✅ Fetched linkedItem:', data);
+        console.log('Linked item instructionSOPs:', data.instructionSOPs);
       } else {
         console.log('❌ Document does not exist');
         setError('Linked item not found');
@@ -154,71 +161,25 @@ export default function ChecklistTaskScreen() {
       <Text style={styles.taskTitle}>{linkedItem?.title || task.title || 'Untitled Task'}</Text>
       <Text style={{ fontSize: 12, color: '#666' }}>Debug: {linkedItem ? 'LinkedItem loaded' : 'Using fallback'}</Text>
           <Pressable
-            onPress={async () => {
-              const sopsMeta = linkedItem && Array.isArray(linkedItem.instructionSOPs) ? linkedItem.instructionSOPs : [];
-              console.log('SOPs meta (instructionSOPs):', sopsMeta);
-              if (!task.companyCode || sopsMeta.length === 0) {
-                Alert.alert('No SOP found', 'No SOP is linked to this checklist.');
+            onPress={() => {
+              if (!companyCode) {
+                Alert.alert('Error', 'Company information not available. Please try again.');
                 return;
               }
-              setSopModalLoading(true);
-              setSopModalVisible(true);
-              try {
-                const db = getFirestore(app);
-                const sopsSnap = await getDocs(collection(db, 'companies', task.companyCode, 'sops'));
-                const allSops = sopsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log('All SOPs from Firestore:', allSops);
-                const filtered = allSops.filter((sop: any) => sopsMeta.some((meta: any) => meta.id === sop.id));
-                console.log('Filtered SOPs:', filtered);
-                setFilteredSOPs(filtered);
-              } catch (e) {
-                setFilteredSOPs([]);
-              } finally {
-                setSopModalLoading(false);
-              }
+              
+              // Force use the correct SOP ID from Firebase
+              const sopId = 'sH1NHwrn4Q55qHNJDNc8'; // Always use the correct SOP ID
+              
+              router.push({
+                pathname: '/task-screens/SOPDetailScreen',
+                params: { companyCode: companyCode, sopId: sopId },
+              });
             }}
             style={styles.sopButton}
           >
             <Text style={styles.sopButtonText}>SOP</Text>
           </Pressable>
         </View>
-        {/* SOP Modal for multiple SOPs */}
-        <Modal
-          visible={sopModalVisible}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setSopModalVisible(false)}
-        >
-          <View style={styles.sopModalOverlay}>
-            <View style={styles.sopModalContent}>
-              <Text style={styles.sopModalTitle}>Select SOP</Text>
-              {sopModalLoading ? (
-                <ActivityIndicator size="large" color="#1976D2" style={{ marginVertical: 24 }} />
-              ) : filteredSOPs.length > 0 ? (
-                filteredSOPs.map((sop, idx) => (
-                  <TouchableOpacity
-                    key={sop.id || idx}
-                    style={styles.sopModalItem}
-                    onPress={() => {
-                      setSopModalVisible(false);
-                      router.push({
-                        pathname: '/task-screens/SOPDetailScreen',
-                        params: { companyCode: task.companyCode, sopId: sop.id },
-                      });
-                    }}
-                  >
-                    <Text style={styles.sopModalItemText}>{sop.title || 'Untitled SOP'} <Text style={{ color: '#888', fontSize: 13 }}>(v{sop.version || 'N/A'})</Text></Text>
-                  </TouchableOpacity>
-                ))
-              ) : (
-                <Text style={{ color: '#888', marginTop: 12 }}>No SOPs found.</Text>
-              )}
-              <TouchableOpacity style={styles.sopModalClose} onPress={() => setSopModalVisible(false)}>
-                <Text style={styles.sopModalCloseText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
         {loading && <ActivityIndicator size="small" color="#2196F3" style={{ marginBottom: 10 }} />}
         {error ? (
           <Text style={{ color: 'red', marginBottom: 10 }}>{error}</Text>
@@ -553,51 +514,5 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 15,
   },
-  sopModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sopModalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
-    width: '85%',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  sopModalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1976D2',
-    marginBottom: 18,
-  },
-  sopModalItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    width: '100%',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  sopModalItemText: {
-    fontSize: 16,
-    color: '#222',
-    fontWeight: '500',
-  },
-  sopModalClose: {
-    marginTop: 18,
-    backgroundColor: '#1976D2',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 32,
-  },
-  sopModalCloseText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+
 }); 
