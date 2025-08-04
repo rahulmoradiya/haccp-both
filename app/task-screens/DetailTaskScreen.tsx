@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert, TextInput, TouchableOpacity, ScrollView } from 'react-native';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
-import { getFirestore, getDocs, collection } from 'firebase/firestore';
+import { getFirestore, getDocs, collection, doc, getDoc } from 'firebase/firestore';
 import { app } from '../../firebase';
 
 type DetailTaskScreenRouteProp = {
@@ -17,40 +17,52 @@ export default function DetailTaskScreen() {
   const router = useRouter();
   const [companyCode, setCompanyCode] = useState<string | null>(null);
   
-  // Temperature state
-  const [temperature, setTemperature] = useState<string>('');
-  const [temperatureUnit, setTemperatureUnit] = useState<'°C' | '°F'>('°C');
-  
-  // Amount state
-  const [amount, setAmount] = useState<string>('');
-  const [amountUnit, setAmountUnit] = useState<string>('units');
-  
-  // Text state
-  const [textInput, setTextInput] = useState<string>('');
-  
-  // Numeric Value state
-  const [numericValue, setNumericValue] = useState<string>('');
-  
-  // Multiple Answers state
-  const [multipleAnswers, setMultipleAnswers] = useState<{[key: string]: boolean}>({
-    'Option 1': false,
-    'Option 2': false,
-    'Option 3': false,
-  });
-  
-  // One Answer state
-  const [oneAnswer, setOneAnswer] = useState<string>('');
-  
-  // Product state
-  const [selectedProduct, setSelectedProduct] = useState<string>('');
-  
-  // Location state
-  const [location, setLocation] = useState<string>('');
-  
   // Media state
   const [mediaAttachments, setMediaAttachments] = useState<string[]>([]);
   
+    // Linked Item state
+  const [linkedItemData, setLinkedItemData] = useState<any>(null);
+  const [linkedItemLoading, setLinkedItemLoading] = useState(false);
+  const [linkedItemError, setLinkedItemError] = useState<string | null>(null);
+
+  // Dynamic fields state
+  const [dynamicFields, setDynamicFields] = useState<any[]>([]);
+  const [dynamicFieldValues, setDynamicFieldValues] = useState<{[key: string]: any}>({});
+
   const db = getFirestore(app);
+
+  // Function to fetch linked item data
+  const fetchLinkedItemData = async () => {
+    if (!task.linkedItemId || !companyCode) return;
+    
+    setLinkedItemLoading(true);
+    setLinkedItemError(null);
+    
+    try {
+      const linkedItemRef = doc(db, 'companies', companyCode, 'detailedCreation', task.linkedItemId);
+      const linkedItemSnap = await getDoc(linkedItemRef);
+      
+      if (linkedItemSnap.exists()) {
+        console.log('Linked item data:', linkedItemSnap.data());
+        setLinkedItemData(linkedItemSnap.data());
+      } else {
+        console.log('No linked item found with ID:', task.linkedItemId);
+        setLinkedItemError('Linked item not found');
+      }
+    } catch (error) {
+      console.error('Error fetching linked item:', error);
+      setLinkedItemError('Failed to fetch linked item');
+    } finally {
+      setLinkedItemLoading(false);
+    }
+  };
+
+  // Fetch linked item data when companyCode is available
+  useEffect(() => {
+    if (companyCode && task.linkedItemId) {
+      fetchLinkedItemData();
+    }
+  }, [companyCode]);
 
   // Get company code from current user
   useEffect(() => {
@@ -77,15 +89,283 @@ export default function DetailTaskScreen() {
     fetchCompanyCode();
   }, []);
 
-  const toggleMultipleAnswer = (option: string) => {
-    setMultipleAnswers(prev => ({
+  const addMediaAttachment = () => {
+    Alert.alert('Media Attachment', 'Camera/Gallery functionality would be implemented here');
+  };
+
+  // Function to update a specific field value
+  const updateFieldValue = (fieldId: string, value: any) => {
+    console.log('Updating field:', fieldId, 'with value:', value);
+    setDynamicFieldValues(prev => ({
       ...prev,
-      [option]: !prev[option]
+      [fieldId]: value
     }));
   };
 
-  const addMediaAttachment = () => {
-    Alert.alert('Media Attachment', 'Camera/Gallery functionality would be implemented here');
+  // Process dynamic fields when linked item data is loaded
+  useEffect(() => {
+    if (linkedItemData && linkedItemData.fields) {
+      console.log('Processing dynamic fields:', linkedItemData.fields);
+      setDynamicFields(linkedItemData.fields);
+    }
+  }, [linkedItemData]);
+
+  // Helper functions for colors
+  const getPriorityColor = (priority: string) => {
+    switch (priority?.toLowerCase()) {
+      case 'high': return '#f44336';
+      case 'medium': return '#ff9800';
+      case 'low': return '#4caf50';
+      default: return '#ff9800';
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'active': return '#4caf50';
+      case 'inactive': return '#9e9e9e';
+      case 'completed': return '#2196f3';
+      case 'pending': return '#ff9800';
+      default: return '#4caf50';
+    }
+  };
+
+  // Function to render dynamic cards based on type
+  const renderDynamicCard = (field: any, index: number) => {
+    const fieldId = `${field.type}_${index}`; // Create unique ID for each field
+    const fieldValue = dynamicFieldValues[fieldId] || {};
+
+    switch (field.type) {
+      case 'temperature':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>🌡️ {field.label || 'Temperature'}</Text>
+            </View>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.temperatureInput}
+                placeholder="Enter temperature..."
+                value={fieldValue.temperature || ''}
+                onChangeText={(value) => updateFieldValue(fieldId, {
+                  ...fieldValue,
+                  temperature: value
+                })}
+                keyboardType="numeric"
+                placeholderTextColor="#999"
+              />
+              <View style={styles.unitContainer}>
+                <TouchableOpacity
+                  style={[styles.unitButton, (fieldValue.temperatureUnit || '°C') === '°C' && styles.unitButtonActive]}
+                  onPress={() => updateFieldValue(fieldId, {
+                    ...fieldValue,
+                    temperatureUnit: '°C'
+                  })}
+                >
+                  <Text style={[styles.unitButtonText, (fieldValue.temperatureUnit || '°C') === '°C' && styles.unitButtonTextActive]}>°C</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.unitButton, (fieldValue.temperatureUnit || '°C') === '°F' && styles.unitButtonActive]}
+                  onPress={() => updateFieldValue(fieldId, {
+                    ...fieldValue,
+                    temperatureUnit: '°F'
+                  })}
+                >
+                  <Text style={[styles.unitButtonText, (fieldValue.temperatureUnit || '°C') === '°F' && styles.unitButtonTextActive]}>°F</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            {fieldValue.temperature && (
+              <Text style={styles.valueDisplay}>
+                Current Value: {fieldValue.temperature} {fieldValue.temperatureUnit || '°C'}
+              </Text>
+            )}
+          </View>
+        );
+
+      case 'amount':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>📊 {field.label || 'Amount'}</Text>
+            </View>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.amountInput}
+                placeholder="Enter amount..."
+                value={fieldValue.amount || ''}
+                onChangeText={(value) => updateFieldValue(fieldId, {
+                  ...fieldValue,
+                  amount: value
+                })}
+                keyboardType="numeric"
+                placeholderTextColor="#999"
+              />
+            </View>
+          </View>
+        );
+
+      case 'text':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>📝 {field.label || 'Text'}</Text>
+            </View>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Enter text..."
+                value={fieldValue.text || ''}
+                onChangeText={(value) => updateFieldValue(fieldId, {
+                  ...fieldValue,
+                  text: value
+                })}
+                multiline
+                placeholderTextColor="#999"
+              />
+            </View>
+          </View>
+        );
+
+      case 'multiple':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>☑️ {field.label || 'Multiple Choice'}</Text>
+            </View>
+            <View style={styles.multipleContainer}>
+              {(field.options || []).map((option: string, optionIndex: number) => (
+                <TouchableOpacity
+                  key={optionIndex}
+                  style={[
+                    styles.multipleOption,
+                    (fieldValue.selectedOptions || {})[option] && styles.multipleOptionSelected
+                  ]}
+                  onPress={() => {
+                    const currentOptions = fieldValue.selectedOptions || {};
+                    updateFieldValue(fieldId, {
+                      ...fieldValue,
+                      selectedOptions: {
+                        ...currentOptions,
+                        [option]: !currentOptions[option]
+                      }
+                    });
+                  }}
+                >
+                  <Text style={[
+                    styles.multipleOptionText,
+                    (fieldValue.selectedOptions || {})[option] && styles.multipleOptionTextSelected
+                  ]}>{option}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        );
+
+      case 'single':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>⭕ {field.label || 'Single Choice'}</Text>
+            </View>
+            <View style={styles.singleContainer}>
+              {(field.options || []).map((option: string, optionIndex: number) => (
+                <TouchableOpacity
+                  key={optionIndex}
+                  style={[
+                    styles.singleOption,
+                    fieldValue.selectedOption === option && styles.singleOptionSelected
+                  ]}
+                  onPress={() => updateFieldValue(fieldId, {
+                    ...fieldValue,
+                    selectedOption: option
+                  })}
+                >
+                  <Text style={[
+                    styles.singleOptionText,
+                    fieldValue.selectedOption === option && styles.singleOptionTextSelected
+                  ]}>{option}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        );
+
+      case 'product':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>🏭 {field.label || 'Product'}</Text>
+            </View>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.productInput}
+                placeholder="Select product..."
+                value={fieldValue.product || ''}
+                onChangeText={(value) => updateFieldValue(fieldId, {
+                  ...fieldValue,
+                  product: value
+                })}
+                placeholderTextColor="#999"
+              />
+            </View>
+          </View>
+        );
+
+      case 'location':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>📍 {field.label || 'Location'}</Text>
+            </View>
+            <View style={styles.locationContainer}>
+              <View style={styles.locationDisplay}>
+                <Text style={styles.locationText}>
+                  {field.config.locationName ? `${field.config.locationName}: ${field.config.locationType}` : 'No location set'}
+                </Text>
+                <Text style={styles.locationIcon}>📍</Text>
+              </View>
+            </View>
+          </View>
+        );
+
+      case 'media':
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>📷 {field.label || 'Media'}</Text>
+            </View>
+            <View style={styles.mediaContainer}>
+              <TouchableOpacity
+                style={styles.addMediaButton}
+                onPress={() => {
+                  Alert.alert('Media Attachment', 'Camera/Gallery functionality would be implemented here');
+                  updateFieldValue(fieldId, {
+                    ...fieldValue,
+                    mediaAttachments: [...(fieldValue.mediaAttachments || []), 'new_media_url']
+                  });
+                }}
+              >
+                <Text style={styles.addMediaButtonText}>+ Add Media</Text>
+              </TouchableOpacity>
+              {(fieldValue.mediaAttachments || []).map((media: string, mediaIndex: number) => (
+                <View key={mediaIndex} style={styles.mediaPreview}>
+                  <Text>Media {mediaIndex + 1}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        );
+
+      default:
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>❓ {field.label || `Unknown Field Type: ${field.type}`}</Text>
+            </View>
+          </View>
+        );
+    }
   };
 
   return (
@@ -114,237 +394,45 @@ export default function DetailTaskScreen() {
           </Pressable>
         </View>
 
-        {/* Temperature Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>🌡️ Temperature</Text>
-          </View>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.temperatureInput}
-              placeholder="Enter temperature..."
-              value={temperature}
-              onChangeText={setTemperature}
-              keyboardType="numeric"
-              placeholderTextColor="#999"
-            />
-            <View style={styles.unitContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.unitButton,
-                  temperatureUnit === '°C' && styles.unitButtonActive
-                ]}
-                onPress={() => setTemperatureUnit('°C')}
-              >
-                <Text style={[
-                  styles.unitButtonText,
-                  temperatureUnit === '°C' && styles.unitButtonTextActive
-                ]}>°C</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.unitButton,
-                  temperatureUnit === '°F' && styles.unitButtonActive
-                ]}
-                onPress={() => setTemperatureUnit('°F')}
-              >
-                <Text style={[
-                  styles.unitButtonText,
-                  temperatureUnit === '°F' && styles.unitButtonTextActive
-                ]}>°F</Text>
-              </TouchableOpacity>
+        {/* Description Section */}
+        <View style={styles.descriptionContainer}>
+          <Text style={styles.descriptionText}>
+            {task.description ? task.description : 'Description: No description.'}
+          </Text>
+        </View>
+
+        {/* Task Details Section */}
+        <View style={styles.taskDetailsContainer}>
+          <View style={styles.taskDetailRow}>
+            <Text style={styles.taskDetailLabel}>Priority:</Text>
+            <View style={[styles.priorityBadge, { backgroundColor: getPriorityColor(task.priority) }]}>
+              <Text style={styles.priorityText}>{task.priority || 'Medium'}</Text>
             </View>
           </View>
-          {temperature && (
-            <Text style={styles.valueDisplay}>
-              Current Value: {temperature} {temperatureUnit}
-            </Text>
-          )}
-        </View>
-
-        {/* Amount Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>📊 Amount</Text>
+          <View style={styles.taskDetailRow}>
+            <Text style={styles.taskDetailLabel}>Status:</Text>
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(task.status) }]}>
+                          <Text style={styles.statusText}>{task.status || 'Active'}</Text>
           </View>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.amountInput}
-              placeholder="Enter amount..."
-              value={amount}
-              onChangeText={setAmount}
-              keyboardType="numeric"
-              placeholderTextColor="#999"
-            />
-            <TextInput
-              style={styles.unitInput}
-              placeholder="units"
-              value={amountUnit}
-              onChangeText={setAmountUnit}
-              placeholderTextColor="#999"
-            />
-          </View>
-          {amount && (
-            <Text style={styles.valueDisplay}>
-              Current Value: {amount} {amountUnit}
-            </Text>
-          )}
-        </View>
-
-        {/* Text Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>📝 Text</Text>
-          </View>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Enter text here..."
-            value={textInput}
-            onChangeText={setTextInput}
-            multiline
-            numberOfLines={4}
-            placeholderTextColor="#999"
-          />
-          {textInput && (
-            <Text style={styles.valueDisplay}>
-              Current Value: {textInput.length > 50 ? textInput.substring(0, 50) + '...' : textInput}
-            </Text>
-          )}
-        </View>
-
-        {/* Numeric Value Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>🔢 Numeric Value</Text>
-          </View>
-          <TextInput
-            style={styles.numericInput}
-            placeholder="Enter numeric value..."
-            value={numericValue}
-            onChangeText={setNumericValue}
-            keyboardType="numeric"
-            placeholderTextColor="#999"
-          />
-          {numericValue && (
-            <Text style={styles.valueDisplay}>
-              Current Value: {numericValue}
-            </Text>
-          )}
-        </View>
-
-        {/* Multiple Answers Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>✅ Multiple Answers</Text>
-          </View>
-          {Object.keys(multipleAnswers).map((option) => (
-            <TouchableOpacity
-              key={option}
-              style={styles.checkboxContainer}
-              onPress={() => toggleMultipleAnswer(option)}
-            >
-              <View style={[
-                styles.checkbox,
-                multipleAnswers[option] && styles.checkboxChecked
-              ]}>
-                {multipleAnswers[option] && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <Text style={styles.checkboxLabel}>{option}</Text>
-            </TouchableOpacity>
-          ))}
-          {Object.values(multipleAnswers).some(Boolean) && (
-            <Text style={styles.valueDisplay}>
-              Selected: {Object.keys(multipleAnswers).filter(key => multipleAnswers[key]).join(', ')}
-            </Text>
-          )}
-        </View>
-
-        {/* One Answer Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>☑️ One Answer</Text>
-          </View>
-          {['Option A', 'Option B', 'Option C'].map((option) => (
-            <TouchableOpacity
-              key={option}
-              style={styles.radioContainer}
-              onPress={() => setOneAnswer(option)}
-            >
-              <View style={[
-                styles.radio,
-                oneAnswer === option && styles.radioChecked
-              ]}>
-                {oneAnswer === option && <View style={styles.radioDot} />}
-              </View>
-              <Text style={styles.radioLabel}>{option}</Text>
-            </TouchableOpacity>
-          ))}
-          {oneAnswer && (
-            <Text style={styles.valueDisplay}>
-              Selected: {oneAnswer}
-            </Text>
-          )}
-        </View>
-
-        {/* Product Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>🏷️ Product</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.productSelector}
-            onPress={() => Alert.alert('Product Selection', 'Product picker would be implemented here')}
-          >
-            <Text style={selectedProduct ? styles.productText : styles.productPlaceholder}>
-              {selectedProduct || 'Select a product...'}
-            </Text>
-            <Text style={styles.dropdownArrow}>▼</Text>
-          </TouchableOpacity>
-          {selectedProduct && (
-            <Text style={styles.valueDisplay}>
-              Selected: {selectedProduct}
-            </Text>
-          )}
-        </View>
-
-        {/* Location Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>📍 Location</Text>
-          </View>
-          <TextInput
-            style={styles.locationInput}
-            placeholder="Enter location..."
-            value={location}
-            onChangeText={setLocation}
-            placeholderTextColor="#999"
-          />
-          {location && (
-            <Text style={styles.valueDisplay}>
-              Current Value: {location}
-            </Text>
-          )}
-        </View>
-
-        {/* Media Attachment Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>📎 Media Attachment</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.mediaButton}
-            onPress={addMediaAttachment}
-          >
-            <Text style={styles.mediaButtonText}>📷 Add Photo/Video</Text>
-          </TouchableOpacity>
-          {mediaAttachments.length > 0 && (
-            <View style={styles.mediaList}>
-              <Text style={styles.valueDisplay}>
-                Attachments: {mediaAttachments.length} file(s)
-              </Text>
+          {task.linkedItemId && (
+            <View style={styles.taskDetailRow}>
+              <Text style={styles.taskDetailLabel}>Linked Item:</Text>
+              {linkedItemLoading ? (
+                <Text style={styles.linkedItemText}>Loading...</Text>
+              ) : linkedItemError ? (
+                <Text style={styles.linkedItemError}>{linkedItemError}</Text>
+              ) : linkedItemData ? (
+                <Text style={styles.linkedItemText}>
+                  {linkedItemData.name || linkedItemData.title || 'Unnamed Item'}
+                </Text>
+              ) : null}
             </View>
           )}
         </View>
+        </View>
+
+        {/* Dynamic Form Cards */}
+        {dynamicFields.map((field, index) => renderDynamicCard(field, index))}
 
         {/* Submit Button */}
         <TouchableOpacity
@@ -388,6 +476,65 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 15,
     letterSpacing: 1,
+  },
+  descriptionContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  descriptionText: {
+    fontSize: 16,
+    color: '#666',
+    lineHeight: 22,
+    fontStyle: 'italic',
+  },
+  taskDetailsContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  taskDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  taskDetailLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginRight: 12,
+    minWidth: 70,
+  },
+  priorityBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  priorityText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  linkedItemText: {
+    fontSize: 16,
+    color: '#1976D2',
+    fontWeight: '500',
+    flex: 1,
+  },
+  linkedItemError: {
+    fontSize: 16,
+    color: '#f44336',
+    fontStyle: 'italic',
   },
   card: {
     backgroundColor: '#fff',
@@ -624,5 +771,107 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  multipleContainer: {
+    flexDirection: 'column',
+    marginTop: 8,
+  },
+  multipleOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    marginBottom: 8,
+    backgroundColor: '#f5f5f5',
+  },
+  multipleOptionSelected: {
+    backgroundColor: '#1976D2',
+  },
+  multipleOptionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  multipleOptionTextSelected: {
+    color: '#fff',
+  },
+  singleContainer: {
+    flexDirection: 'column',
+    marginTop: 8,
+  },
+  singleOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    marginBottom: 8,
+    backgroundColor: '#f5f5f5',
+  },
+  singleOptionSelected: {
+    backgroundColor: '#1976D2',
+  },
+  singleOptionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  singleOptionTextSelected: {
+    color: '#fff',
+  },
+  productInput: {
+    flex: 1,
+    height: 48,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    color: '#333',
+    backgroundColor: '#fafafa',
+  },
+  mediaContainer: {
+    marginTop: 8,
+  },
+  addMediaButton: {
+    height: 48,
+    borderWidth: 2,
+    borderColor: '#1976D2',
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f0f8ff',
+  },
+  addMediaButtonText: {
+    fontSize: 16,
+    color: '#1976D2',
+    fontWeight: '600',
+  },
+  mediaPreview: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 4,
+  },
+  locationContainer: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+  },
+  locationDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 12,
+    padding: 12,
+  },
+  locationText: {
+    fontSize: 16,
+    color: '#666',
+    flex: 1,
+  },
+  locationIcon: {
+    fontSize: 18,
+    color: '#E53935',
   },
 }); 
