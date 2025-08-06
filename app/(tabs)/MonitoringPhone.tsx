@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, SafeAreaView, TouchableOpacity, Modal, Pressable, ScrollView, Platform } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { collection, getDocs, query, getFirestore } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { app } from '../../firebase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -44,6 +44,7 @@ export default function MonitoringPhone() {
   const [filterFrequencies, setFilterFrequencies] = useState<string[]>([]);
   const [userDisplayName, setUserDisplayName] = useState<string | null>(null);
   const [userPhone, setUserPhone] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Helper: frequency options
   const frequencyOptions = [
@@ -55,30 +56,70 @@ export default function MonitoringPhone() {
     { label: 'For You', value: 'for-you' },
   ];
 
-  // Get company code from current user
+  // Listen to authentication state changes
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setIsAuthenticated(true);
+        setUserUid(user.uid);
+        console.log('✅ User authenticated:', user.uid);
+      } else {
+        setIsAuthenticated(false);
+        setUserUid(null);
+        setCompanyCode(null);
+        console.log('❌ User not authenticated');
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Get company code from current user - only run when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
     const fetchCompanyCode = async () => {
       const user = auth.currentUser;
-      if (user) {
-        setUserUid(user.uid); // Save UID for debug
-        try {
-          const companiesSnap = await getDocs(collection(db, 'companies'));
-          for (const companyDoc of companiesSnap.docs) {
-            const usersCol = await getDocs(collection(db, 'companies', companyDoc.id, 'users'));
-            const userDoc = usersCol.docs.find(doc => doc.data().uid === user.uid);
-            if (userDoc) {
-              setCompanyCode(companyDoc.id);
-              break;
-            }
+      if (!user) {
+        console.log('❌ No current user found');
+        return;
+      }
+
+      console.log('🔍 Fetching company code for user:', user.uid);
+      setUserUid(user.uid);
+      
+      try {
+        console.log('📋 Fetching companies collection...');
+        const companiesSnap = await getDocs(collection(db, 'companies'));
+        console.log('✅ Found', companiesSnap.docs.length, 'companies');
+        
+        for (const companyDoc of companiesSnap.docs) {
+          console.log('🔍 Checking company:', companyDoc.id);
+          const usersCol = await getDocs(collection(db, 'companies', companyDoc.id, 'users'));
+          const userDoc = usersCol.docs.find(doc => doc.data().uid === user.uid);
+          if (userDoc) {
+            console.log('✅ Found user in company:', companyDoc.id);
+            setCompanyCode(companyDoc.id);
+            break;
           }
-        } catch (error) {
-          console.error('Error fetching company code:', error);
-          setError('Failed to fetch company information');
+        }
+      } catch (error: any) {
+        console.error('❌ Error fetching company code:', error);
+        console.error('❌ Error code:', error.code);
+        console.error('❌ Error message:', error.message);
+        
+        if (error.code === 'permission-denied') {
+          setError('Permission denied. Please check your Firebase rules.');
+        } else if (error.code === 'unavailable') {
+          setError('Firebase service unavailable. Please check your internet connection.');
+        } else {
+          setError('Failed to fetch company information. Please try again.');
         }
       }
     };
+
     fetchCompanyCode();
-  }, []);
+  }, [isAuthenticated]);
 
   // Fetch tasks from Firebase collections
   useEffect(() => {

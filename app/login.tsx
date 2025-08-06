@@ -6,26 +6,32 @@ import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import React, { useState } from 'react';
 import { Button, StyleSheet, Text, TextInput } from 'react-native';
 import { app } from '../firebase';
-import { useAuth } from './_layout';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const { login } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async () => {
     if (!email || !password) {
       setError('Please enter both email and password.');
       return;
     }
+    
     setError('');
+    setIsLoading(true);
+    
     try {
       const auth = getAuth(app);
       await signInWithEmailAndPassword(auth, email, password);
-      login();
+      console.log('✅ Login successful');
+      // The auth context will automatically handle the state change
     } catch (err: any) {
+      console.error('❌ Login failed:', err);
       setError(err.message || 'Login failed.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -41,6 +47,7 @@ export default function LoginScreen() {
           keyboardType="email-address"
           value={email}
           onChangeText={setEmail}
+          editable={!isLoading}
         />
         <TextInput
           style={styles.input}
@@ -48,9 +55,14 @@ export default function LoginScreen() {
           secureTextEntry
           value={password}
           onChangeText={setPassword}
+          editable={!isLoading}
         />
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Button title="Login" onPress={handleLogin} />
+        <Button 
+          title={isLoading ? "Logging in..." : "Login"} 
+          onPress={handleLogin}
+          disabled={isLoading}
+        />
       </ThemedView>
     </>
   );
