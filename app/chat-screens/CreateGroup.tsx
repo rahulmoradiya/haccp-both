@@ -3,23 +3,17 @@ import {
   View,
   Text,
   StyleSheet,
-  TextInput,
-  TouchableOpacity,
   FlatList,
+  TouchableOpacity,
   SafeAreaView,
-  Alert,
   ActivityIndicator,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { auth, db } from '../../firebase';
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  addDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
+import { useAuth } from '../_layout';
+import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 interface User {
   uid: string;
@@ -27,130 +21,128 @@ interface User {
   email: string;
   role?: string;
   department?: string;
+  isOnline?: boolean;
+  photoURL?: string;
 }
 
-export default function CreateGroupScreen() {
+export default function CreateGroup() {
   const router = useRouter();
-  const { companyCode } = useLocalSearchParams();
+  const { companyCode: companyCodeFromParams, allUsers: allUsersParam } = useLocalSearchParams<{ companyCode: string; allUsers?: string }>();
   const currentUser = auth.currentUser;
-
-  const [groupName, setGroupName] = useState('');
-  const [groupDescription, setGroupDescription] = useState('');
+  const { companyCode, allUsers } = useAuth();
+  
   const [users, setUsers] = useState<User[]>([]);
-  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
+  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
+  const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [groupName, setGroupName] = useState('');
   const [creating, setCreating] = useState(false);
 
+  // Use preloaded allUsers from context; no Firestore reads here
   useEffect(() => {
-    fetchUsers();
-  }, [companyCode]);
-
-  const fetchUsers = async () => {
-    if (!companyCode || !currentUser) return;
-
-    try {
-      const usersQuery = query(
-        collection(db, 'users'),
-        where('companyCode', '==', companyCode)
-      );
-
-      const snapshot = await getDocs(usersQuery);
-      const usersList = snapshot.docs
-        .map(doc => ({
-          uid: doc.id,
-          ...doc.data()
-        } as User))
-        .filter(user => user.uid !== currentUser.uid);
-
-      setUsers(usersList);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    } finally {
-      setLoading(false);
+    let source = allUsers as any[];
+    if ((!source || source.length === 0) && allUsersParam) {
+      try { source = JSON.parse(allUsersParam); } catch {}
     }
-  };
+    const list = (source || []).filter((u: any) => u.uid !== currentUser?.uid).map((u: any) => ({
+      uid: u.uid,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      department: (u as any).departmentName || u.department,
+      isOnline: u.isOnline,
+      photoURL: u.photoURL,
+    }));
+    setUsers(list);
+    setFilteredUsers(list);
+    setLoading(false);
+  }, [allUsers, allUsersParam, currentUser]);
 
-  const toggleUserSelection = (userId: string) => {
-    const newSelection = new Set(selectedUsers);
-    if (newSelection.has(userId)) {
-      newSelection.delete(userId);
+  // Filter users based on search query
+  useEffect(() => {
+    if (searchQuery.trim() === '') {
+      setFilteredUsers(users);
     } else {
-      newSelection.add(userId);
+      const filtered = users.filter(user =>
+        user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (user.department && user.department.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
+      setFilteredUsers(filtered);
     }
-    setSelectedUsers(newSelection);
+  }, [searchQuery, users]);
+
+  const toggleUserSelection = (user: User) => {
+    setSelectedUsers(prev => {
+      const isSelected = prev.some(selected => selected.uid === user.uid);
+      if (isSelected) {
+        return prev.filter(selected => selected.uid !== user.uid);
+      } else {
+        return [...prev, user];
+      }
+    });
   };
 
-  const createGroup = async () => {
+  const handleCreateGroup = async () => {
+    if (!currentUser || !companyCode) return;
+    
     if (!groupName.trim()) {
       Alert.alert('Error', 'Please enter a group name');
       return;
     }
 
-    if (selectedUsers.size === 0) {
-      Alert.alert('Error', 'Please select at least one member');
+    if (selectedUsers.length === 0) {
+      Alert.alert('Error', 'Please select at least one user');
       return;
     }
-
-    if (!currentUser || !companyCode) return;
 
     setCreating(true);
 
     try {
-      const members = [currentUser.uid, ...Array.from(selectedUsers)];
-      const memberNames: { [key: string]: string } = {};
-      
-      // Add current user
-      memberNames[currentUser.uid] = currentUser.displayName || currentUser.email || 'Unknown';
-      
-      // Add selected users
-      users.forEach(user => {
-        if (selectedUsers.has(user.uid)) {
-          memberNames[user.uid] = user.name;
-        }
-      });
+      const effectiveCompanyCode = (companyCode as string) || (companyCodeFromParams as string);
+      if (!effectiveCompanyCode) return;
 
-      // Create group document
+      const groupsRef = collection(db, 'companies', effectiveCompanyCode, 'groups');
+      
+      // Create group data
       const groupData = {
         name: groupName.trim(),
-        description: groupDescription.trim(),
-        members,
-        memberNames,
-        admins: [currentUser.uid],
+        members: [currentUser.uid, ...selectedUsers.map(user => user.uid)],
+        memberNames: {
+          [currentUser.uid]: currentUser.displayName || currentUser.email,
+          ...selectedUsers.reduce((acc, user) => {
+            acc[user.uid] = user.name;
+            return acc;
+          }, {} as Record<string, string>),
+        },
         createdBy: currentUser.uid,
-        createdAt: serverTimestamp(),
-        lastMessage: `${memberNames[currentUser.uid]} created the group`,
+        lastMessage: '',
         lastMessageTime: serverTimestamp(),
-        lastMessageSender: 'system',
-        unreadCount: Object.fromEntries(members.map(id => [id, 0])),
+        lastMessageSender: '',
+        unreadCount: {
+          [currentUser.uid]: 0,
+          ...selectedUsers.reduce((acc, user) => {
+            acc[user.uid] = 0;
+            return acc;
+          }, {} as Record<string, number>),
+        },
+        createdAt: serverTimestamp(),
       };
 
-      const groupRef = await addDoc(
-        collection(db, 'companies', companyCode as string, 'groups'),
-        groupData
-      );
-
-      // Add system message about group creation
-      await addDoc(
-        collection(db, 'companies', companyCode as string, 'groups', groupRef.id, 'messages'),
-        {
-          text: `${memberNames[currentUser.uid]} created the group`,
-          senderId: 'system',
-          senderName: 'System',
-          timestamp: serverTimestamp(),
-          type: 'system',
-        }
-      );
-
-      // Navigate to the new group chat
-      router.replace({
-        pathname: '/chat-screens/GroupChat',
+      const newDocRef = doc(groupsRef);
+      await setDoc(newDocRef, groupData);
+      
+      // Navigate to group chat
+      router.push({
+        pathname: '/chat-screens/DetailChatScreen',
         params: {
-          groupId: groupRef.id,
-          groupName: groupName,
-          companyCode: companyCode,
+          chatId: newDocRef.id,
+          type: 'group',
+          chatName: groupName.trim(),
+          companyCode: effectiveCompanyCode,
         },
       });
-
     } catch (error) {
       console.error('Error creating group:', error);
       Alert.alert('Error', 'Failed to create group. Please try again.');
@@ -159,36 +151,41 @@ export default function CreateGroupScreen() {
     }
   };
 
-  const renderUser = ({ item }: { item: User }) => {
-    const isSelected = selectedUsers.has(item.uid);
+  const renderUserItem = ({ item }: { item: User }) => {
+    const isSelected = selectedUsers.some(user => user.uid === item.uid);
     
     return (
       <TouchableOpacity
-        style={styles.userItem}
-        onPress={() => toggleUserSelection(item.uid)}
+        style={[styles.userItem, isSelected && styles.selectedUserItem]}
+        onPress={() => toggleUserSelection(item)}
       >
-        <View style={styles.userInfo}>
-          <View style={styles.avatar}>
+        <View style={styles.avatarContainer}>
+          <View style={[styles.avatar, isSelected && styles.selectedAvatar]}>
             <Text style={styles.avatarText}>
               {item.name.charAt(0).toUpperCase()}
             </Text>
           </View>
-          <View style={styles.userDetails}>
-            <Text style={styles.userName}>{item.name}</Text>
-            <Text style={styles.userRole}>
-              {item.role && item.department
-                ? `${item.role} • ${item.department}`
-                : item.role || item.department || item.email
-              }
-            </Text>
-          </View>
+          {isSelected && <View style={styles.checkmark} />}
         </View>
-        
-        <View style={[
-          styles.checkbox,
-          isSelected && styles.checkedBox
-        ]}>
-          {isSelected && <Text style={styles.checkmark}>✓</Text>}
+
+        <View style={styles.userInfo}>
+          <Text style={styles.userName} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <Text style={styles.userEmail} numberOfLines={1}>
+            {item.email}
+          </Text>
+          {item.department && (
+            <Text style={styles.userDepartment} numberOfLines={1}>
+              {item.department}
+            </Text>
+          )}
+        </View>
+
+        <View style={styles.userRole}>
+          <Text style={styles.roleText}>
+            {item.role || 'User'}
+          </Text>
         </View>
       </TouchableOpacity>
     );
@@ -207,19 +204,12 @@ export default function CreateGroupScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backButtonText}>Cancel</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>New Group</Text>
-        <TouchableOpacity
-          style={[styles.createButton, { opacity: groupName.trim() && selectedUsers.size > 0 ? 1 : 0.5 }]}
-          onPress={createGroup}
-          disabled={!groupName.trim() || selectedUsers.size === 0 || creating}
+        <Text style={styles.title}>Create Group</Text>
+        <TouchableOpacity 
+          style={[styles.createButton, selectedUsers.length === 0 && styles.createButtonDisabled]}
+          onPress={handleCreateGroup}
+          disabled={selectedUsers.length === 0 || creating}
         >
           <Text style={styles.createButtonText}>
             {creating ? 'Creating...' : 'Create'}
@@ -227,39 +217,69 @@ export default function CreateGroupScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Group Info */}
-      <View style={styles.groupInfoContainer}>
+      <View style={styles.groupNameContainer}>
         <TextInput
           style={styles.groupNameInput}
-          placeholder="Group name"
+          placeholder="Enter group name..."
           value={groupName}
           onChangeText={setGroupName}
-          maxLength={50}
-        />
-        <TextInput
-          style={styles.groupDescriptionInput}
-          placeholder="Group description (optional)"
-          value={groupDescription}
-          onChangeText={setGroupDescription}
-          maxLength={200}
-          multiline
         />
       </View>
 
-      {/* Members Selection */}
-      <View style={styles.membersContainer}>
-        <Text style={styles.sectionTitle}>
-          Add Members ({selectedUsers.size} selected)
+      <View style={styles.selectedUsersContainer}>
+        <Text style={styles.selectedUsersTitle}>
+          Selected Users ({selectedUsers.length})
         </Text>
-        
-        <FlatList
-          data={users}
-          keyExtractor={(item) => item.uid}
-          renderItem={renderUser}
-          style={styles.usersList}
-          showsVerticalScrollIndicator={false}
+        {selectedUsers.length > 0 && (
+          <FlatList
+            data={selectedUsers}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            renderItem={({ item }) => (
+              <View style={styles.selectedUserChip}>
+                <Text style={styles.selectedUserChipText}>
+                  {item.name}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => toggleUserSelection(item)}
+                  style={styles.removeUserButton}
+                >
+                  <Text style={styles.removeUserButtonText}>×</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            keyExtractor={(item) => item.uid}
+            style={styles.selectedUsersList}
+          />
+        )}
+      </View>
+
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search users..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
         />
       </View>
+
+      <FlatList
+        data={filteredUsers}
+        renderItem={renderUserItem}
+        keyExtractor={(item) => item.uid}
+        style={styles.userList}
+        contentContainerStyle={styles.userListContent}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              {searchQuery ? 'No users found' : 'No users available'}
+            </Text>
+            <Text style={styles.emptySubtext}>
+              {searchQuery ? 'Try a different search term' : 'No other users in this company'}
+            </Text>
+          </View>
+        }
+      />
     </SafeAreaView>
   );
 }
@@ -268,16 +288,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
   },
   header: {
     flexDirection: 'row',
@@ -288,117 +298,190 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  backButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  backButtonText: {
-    fontSize: 16,
-    color: '#007AFF',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
     color: '#000',
   },
   createButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  createButtonDisabled: {
+    backgroundColor: '#ccc',
   },
   createButtonText: {
-    fontSize: 16,
-    color: '#007AFF',
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '600',
   },
-  groupInfoContainer: {
+  groupNameContainer: {
     paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 8,
-    borderBottomColor: '#f8f8f8',
+    paddingVertical: 12,
   },
   groupNameInput: {
-    fontSize: 18,
-    fontWeight: '600',
-    borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-    paddingVertical: 12,
-    marginBottom: 12,
-  },
-  groupDescriptionInput: {
-    fontSize: 16,
-    color: '#666',
-    paddingVertical: 8,
-    minHeight: 40,
-  },
-  membersContainer: {
-    flex: 1,
+    height: 40,
+    backgroundColor: '#f8f8f8',
+    borderRadius: 20,
     paddingHorizontal: 16,
-  },
-  sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#000',
-    paddingVertical: 16,
   },
-  usersList: {
+  selectedUsersContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  selectedUsersTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 8,
+  },
+  selectedUsersList: {
+    maxHeight: 60,
+  },
+  selectedUserChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  selectedUserChipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  removeUserButton: {
+    marginLeft: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  removeUserButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  searchContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  searchInput: {
+    height: 40,
+    backgroundColor: '#f8f8f8',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    fontSize: 16,
+  },
+  userList: {
     flex: 1,
+  },
+  userListContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
   },
   userItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  userInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
+  selectedUserItem: {
+    backgroundColor: '#f0f8ff',
+  },
+  avatarContainer: {
+    position: 'relative',
+    marginRight: 12,
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+  },
+  selectedAvatar: {
+    backgroundColor: '#34C759',
   },
   avatarText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
   },
-  userDetails: {
+  checkmark: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#34C759',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  userInfo: {
     flex: 1,
   },
   userName: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#000',
     marginBottom: 2,
   },
-  userRole: {
+  userEmail: {
     fontSize: 14,
     color: '#666',
+    marginBottom: 2,
   },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#ddd',
+  userDepartment: {
+    fontSize: 12,
+    color: '#999',
+  },
+  userRole: {
+    marginLeft: 8,
+  },
+  roleText: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  checkedBox: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666',
   },
-  checkmark: {
-    color: '#fff',
-    fontSize: 14,
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingTop: 60,
+  },
+  emptyText: {
+    fontSize: 18,
     fontWeight: 'bold',
+    color: '#666',
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
   },
 });

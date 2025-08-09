@@ -1,10 +1,10 @@
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { getAuth } from 'firebase/auth';
-import { collectionGroup, doc, getDoc, getDocs, getFirestore } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Button, Image, StyleSheet, Text, View, ScrollView } from 'react-native';
-import { app } from '../../firebase';
+import { app, db } from '../../firebase';
 import { useAuth } from '../_layout';
 
 export default function ProfileScreen() {
@@ -12,54 +12,47 @@ export default function ProfileScreen() {
   const [profileData, setProfileData] = useState<any>(null);
   const [companyInfo, setCompanyInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const { logout } = useAuth();
+  const { logout, companyCode } = useAuth();
 
   useEffect(() => {
     const fetchProfile = async () => {
       const auth = getAuth(app);
       const user = auth.currentUser;
-      if (user) {
-        setUserInfo({
-          uid: user.uid,
-          email: user.email,
-          name: user.displayName,
-          photo: user.photoURL,
-        });
-        const db = getFirestore(app);
+      try {
+        if (user) {
+          setUserInfo({
+            uid: user.uid,
+            email: user.email,
+            name: user.displayName,
+            photo: user.photoURL,
+          });
 
-        // 1. Find the user's companyCode using a collection group query
-        const usersSnap = await getDocs(collectionGroup(db, 'users'));
-        const userDoc = usersSnap.docs.find(doc => doc.data().uid === user.uid);
-        if (userDoc) {
-          const data = userDoc.data();
-          const companyCode = data.companyCode;
+          if (!companyCode) {
+            setProfileData({});
+            setCompanyInfo({});
+            return;
+          }
 
-          // 2. Fetch the user's full profile from the correct path
+          // Fetch user's profile under their company
           const companyUserDocRef = doc(db, 'companies', companyCode, 'users', user.uid);
           const companyUserSnap = await getDoc(companyUserDocRef);
-          if (companyUserSnap.exists()) {
-            setProfileData(companyUserSnap.data());
-          } else {
-            setProfileData({});
-          }
+          setProfileData(companyUserSnap.exists() ? companyUserSnap.data() : {});
 
-          // 3. Fetch company information
+          // Fetch company information
           const companyProfileRef = doc(db, 'companies', companyCode, 'companyProfile', 'profile');
           const companyProfileSnap = await getDoc(companyProfileRef);
-          if (companyProfileSnap.exists()) {
-            setCompanyInfo(companyProfileSnap.data());
-          } else {
-            setCompanyInfo({});
-          }
-        } else {
-          setProfileData({});
-          setCompanyInfo({});
+          setCompanyInfo(companyProfileSnap.exists() ? companyProfileSnap.data() : {});
         }
+      } catch (e) {
+        console.error('Failed to load profile:', e);
+        setProfileData({});
+        setCompanyInfo({});
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
     fetchProfile();
-  }, []);
+  }, [companyCode]);
 
   if (loading) {
     return <ActivityIndicator style={{ flex: 1 }} size="large" />;

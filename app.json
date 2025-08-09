@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.test123",
+      "bundleIdentifier": "haccphub-app",
       "googleServicesFile": "./app/GoogleService-Info.plist"
     },
     "android": {

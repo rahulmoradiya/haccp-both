@@ -28,7 +28,7 @@
         <key>CFBundleURLSchemes</key>
         <array>
           <string>test123</string>
-          <string>com.anonymous.test123</string>
+          <string>haccphub-app</string>
         </array>
       </dict>
     </array>

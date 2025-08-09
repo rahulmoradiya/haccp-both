@@ -5,13 +5,12 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  TextInput,
   SafeAreaView,
   Alert,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useAuth } from '../_layout';
 import { auth, db } from '../../firebase';
 import {
   collection,
@@ -21,10 +20,6 @@ import {
   orderBy,
   doc,
   getDoc,
-  getDocs,
-  addDoc,
-  updateDoc,
-  serverTimestamp,
 } from 'firebase/firestore';
 
 interface ChatItem {
@@ -38,56 +33,23 @@ interface ChatItem {
   participants?: string[];
   members?: string[];
   otherUserId?: string;
-  avatar?: string;
   memberCount?: number;
-}
-
-interface User {
-  uid: string;
-  name: string;
-  email: string;
-  role?: string;
-  department?: string;
-  isOnline?: boolean;
 }
 
 export default function ChatScreen() {
   const router = useRouter();
   const currentUser = auth.currentUser;
+  const { allUsers, companyCode, isAppDataLoading } = useAuth();
   
   const [chatItems, setChatItems] = useState<ChatItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [companyCode, setCompanyCode] = useState<string | null>(null);
 
-  // Get company code from user profile
+  // When app context finishes loading, stop spinner if we don't have a company yet
   useEffect(() => {
-    const fetchCompanyCode = async () => {
-      if (!currentUser) {
-        console.log('No current user available');
-        return;
-      }
-
-      console.log('Fetching company code for user:', currentUser.uid);
-      try {
-        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          console.log('User data:', userData);
-          setCompanyCode(userData.companyCode);
-          console.log('Company code set:', userData.companyCode);
-        } else {
-          console.log('User document does not exist');
-          setLoading(false); // Stop loading if no user doc
-        }
-      } catch (error) {
-        console.error('Error fetching company code:', error);
-        setLoading(false); // Stop loading on error
-      }
-    };
-
-    fetchCompanyCode();
-  }, [currentUser]);
+    if (!isAppDataLoading && (!currentUser || !companyCode)) {
+      setLoading(false);
+    }
+  }, [isAppDataLoading, currentUser, companyCode]);
 
   // Fetch conversations and groups
   useEffect(() => {
@@ -111,7 +73,7 @@ export default function ChatScreen() {
     }, 10000); // 10 second timeout
 
     const updateChatItems = () => {
-      clearTimeout(timeoutId); // Clear timeout when we get data
+      clearTimeout(timeoutId);
       const allChats = [...conversations, ...groups];
       allChats.sort((a, b) => {
         if (!a.lastMessageTime) return 1;
@@ -133,22 +95,39 @@ export default function ChatScreen() {
       conversationsQuery, 
       (snapshot) => {
         console.log('Conversations snapshot received, docs:', snapshot.docs.length);
-        conversations = snapshot.docs.map(doc => {
-          const data = doc.data();
-          const otherParticipant = data.participants?.find((p: string) => p !== currentUser.uid);
-          
-          return {
-            id: doc.id,
+        // Build a map keyed by deterministic pair key to dedupe duplicates
+        const byPairKey = new Map<string, any>();
+
+        snapshot.docs.forEach(docSnap => {
+          const data = docSnap.data() as any;
+          const otherParticipant = (data.participants || []).find((p: string) => p !== currentUser.uid);
+          if (!otherParticipant) return;
+
+          const pairKey = (data.participantsKey as string) || [currentUser.uid, otherParticipant].sort().join('_');
+
+          const candidate = {
+            id: docSnap.id,
             type: 'direct' as const,
-            name: data.participantNames?.[otherParticipant] || 'Unknown User',
+            name: (data.participantNames && data.participantNames[otherParticipant]) || 'Unknown User',
             lastMessage: data.lastMessage || '',
             lastMessageTime: data.lastMessageTime,
             lastMessageSender: data.lastMessageSender,
-            unreadCount: data.unreadCount?.[currentUser.uid] || 0,
+            unreadCount: (data.unreadCount && data.unreadCount[currentUser.uid]) || 0,
             otherUserId: otherParticipant,
             participants: data.participants,
-          };
+          } as any;
+
+          const existing = byPairKey.get(pairKey);
+          if (!existing) {
+            byPairKey.set(pairKey, candidate);
+          } else {
+            const a = existing.lastMessageTime?.toMillis?.() || 0;
+            const b = candidate.lastMessageTime?.toMillis?.() || 0;
+            if (b >= a) byPairKey.set(pairKey, candidate);
+          }
         });
+
+        conversations = Array.from(byPairKey.values());
         updateChatItems();
       },
       (error) => {
@@ -201,53 +180,42 @@ export default function ChatScreen() {
   const formatTime = (timestamp: any) => {
     if (!timestamp) return '';
     
-    const date = timestamp.toDate();
     const now = new Date();
-    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+    const messageTime = timestamp.toDate();
+    const diffInHours = (now.getTime() - messageTime.getTime()) / (1000 * 60 * 60);
     
     if (diffInHours < 24) {
-      return date.toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit',
-        hour12: true 
-      });
-    } else if (diffInHours < 168) { // 7 days
-      return date.toLocaleDateString('en-US', { weekday: 'short' });
+      return messageTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } else if (diffInHours < 48) {
+      return 'Yesterday';
     } else {
-      return date.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric' 
-      });
+      return messageTime.toLocaleDateString();
     }
   };
 
   const handleChatPress = (item: ChatItem) => {
     if (item.type === 'direct') {
       router.push({
-        pathname: '/chat-screens/DirectMessage',
+        pathname: '/chat-screens/DetailChatScreen',
         params: {
+          chatId: item.id,
+          type: 'direct',
           otherUserId: item.otherUserId,
-          otherUserName: item.name,
+          chatName: item.name,
           companyCode: companyCode,
         },
       });
     } else {
       router.push({
-        pathname: '/chat-screens/GroupChat',
+        pathname: '/chat-screens/DetailChatScreen',
         params: {
-          groupId: item.id,
-          groupName: item.name,
+          chatId: item.id,
+          type: 'group',
+          chatName: item.name,
           companyCode: companyCode,
         },
       });
     }
-  };
-
-  const handleSearchUsers = () => {
-    router.push({
-      pathname: '/chat-screens/SearchUsers',
-      params: { companyCode: companyCode },
-    });
   };
 
   const handleCreateOptions = () => {
@@ -259,14 +227,14 @@ export default function ChatScreen() {
           text: 'Direct Message',
           onPress: () => router.push({
             pathname: '/chat-screens/SearchUsers',
-            params: { companyCode: companyCode },
+            params: { companyCode: companyCode ?? '', allUsers: JSON.stringify(allUsers || []) },
           }),
         },
         {
           text: 'Create Group',
           onPress: () => router.push({
             pathname: '/chat-screens/CreateGroup',
-            params: { companyCode: companyCode },
+            params: { companyCode: companyCode ?? '', allUsers: JSON.stringify(allUsers || []) },
           }),
         },
         { text: 'Cancel', style: 'cancel' },
@@ -280,17 +248,14 @@ export default function ChatScreen() {
       onPress={() => handleChatPress(item)}
     >
       <View style={styles.avatarContainer}>
-        {item.type === 'direct' ? (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {item.name.charAt(0).toUpperCase()}
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.avatar, styles.groupAvatar]}>
-            <Text style={styles.avatarText}>👥</Text>
-          </View>
-        )}
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {item.type === 'direct' 
+              ? item.name.charAt(0).toUpperCase()
+              : '👥'
+            }
+          </Text>
+        </View>
         {item.unreadCount && item.unreadCount > 0 && (
           <View style={styles.unreadBadge}>
             <Text style={styles.unreadText}>
@@ -303,10 +268,9 @@ export default function ChatScreen() {
       <View style={styles.chatInfo}>
         <View style={styles.chatHeader}>
           <Text style={styles.chatName} numberOfLines={1}>
-            {item.name}
-            {item.type === 'group' && item.memberCount && (
-              <Text style={styles.memberCount}> ({item.memberCount})</Text>
-            )}
+            {item.type === 'group' && typeof item.memberCount === 'number'
+              ? `${item.name} (${item.memberCount})`
+              : item.name}
           </Text>
           <Text style={styles.chatTime}>
             {formatTime(item.lastMessageTime)}
@@ -318,10 +282,6 @@ export default function ChatScreen() {
         </Text>
       </View>
     </TouchableOpacity>
-  );
-
-  const filteredChats = chatItems.filter(item =>
-    item.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   if (loading) {
@@ -337,58 +297,26 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Chats</Text>
-        <View style={styles.headerButtons}>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={handleSearchUsers}
-          >
-            <Text style={styles.headerButtonText}>🔍</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={handleCreateOptions}
-          >
-            <Text style={styles.headerButtonText}>+</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.title}>Chats</Text>
+        <TouchableOpacity style={styles.addButton} onPress={handleCreateOptions}>
+          <Text style={styles.addButtonText}>+</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search chats..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-      </View>
-
-      {/* Chat List */}
-      {filteredChats.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No chats yet</Text>
-          <Text style={styles.emptySubtext}>
-            Start a conversation by tapping the + button
-          </Text>
-          <TouchableOpacity
-            style={styles.startChatButton}
-            onPress={handleCreateOptions}
-          >
-            <Text style={styles.startChatButtonText}>Start Chatting</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredChats}
-          keyExtractor={(item) => item.id}
-          renderItem={renderChatItem}
-          style={styles.chatList}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+      <FlatList
+        data={chatItems}
+        renderItem={renderChatItem}
+        keyExtractor={(item) => item.id}
+        style={styles.chatList}
+        contentContainerStyle={styles.chatListContent}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>No chats yet</Text>
+            <Text style={styles.emptySubtext}>Start a conversation to begin chatting</Text>
+          </View>
+        }
+      />
     </SafeAreaView>
   );
 }
@@ -417,44 +345,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
-  headerTitle: {
+  title: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#000',
   },
-  headerButtons: {
-    flexDirection: 'row',
-  },
-  headerButton: {
+  addButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
   },
-  headerButtonText: {
+  addButtonText: {
     fontSize: 18,
     fontWeight: 'bold',
-  },
-  searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  searchInput: {
-    height: 40,
-    backgroundColor: '#f8f8f8',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    fontSize: 16,
   },
   chatList: {
     flex: 1,
   },
+  chatListContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
   chatItem: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
@@ -543,16 +459,5 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
     marginBottom: 24,
-  },
-  startChatButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 25,
-  },
-  startChatButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
   },
 });
