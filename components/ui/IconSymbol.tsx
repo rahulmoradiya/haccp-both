@@ -18,6 +18,10 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  // Added common tab icons used in the app so Android/web have valid fallbacks
+  'message.fill': 'message',
+  'checklist': 'assignment-turned-in',
+  'person.crop.circle': 'person',
 } as IconMapping;
 
 /**

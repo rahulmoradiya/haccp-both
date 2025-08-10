@@ -190,6 +190,15 @@ export default function RootLayout() {
         {isAuthenticated ? (
           <Stack>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-screens/DetailChatScreen" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-screens/GroupProfile" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-screens/TeamMemberProfile" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-screens/SearchUsers" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-screens/CreateGroup" options={{ headerShown: false }} />
+            <Stack.Screen name="task-screens/DetailTaskScreen" options={{ headerShown: false }} />
+            <Stack.Screen name="task-screens/ChecklistTaskScreen" options={{ headerShown: false }} />
+            <Stack.Screen name="task-screens/PersonalTaskScreen" options={{ headerShown: false }} />
+            <Stack.Screen name="task-screens/SOPDetailScreen" options={{ headerShown: false }} />
             <Stack.Screen name="+not-found" />
           </Stack>
         ) : (

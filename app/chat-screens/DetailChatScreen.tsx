@@ -31,6 +31,7 @@ import {
   DocumentData,
   setDoc,
   deleteDoc,
+  getDoc,
 } from 'firebase/firestore';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -74,8 +75,30 @@ export default function DetailChatScreen() {
   const [lastVisible, setLastVisible] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [otherUserTyping, setOtherUserTyping] = useState(false);
+  const [otherUserProfile, setOtherUserProfile] = useState<{ photoURL?: string; displayName?: string } | null>(null);
 
   const MESSAGES_PER_PAGE = 20;
+
+  // Fetch other user's profile for direct chats
+  useEffect(() => {
+    if (type === 'direct' && otherUserId && companyCode) {
+      const fetchOtherUserProfile = async () => {
+        try {
+          const userDoc = await getDoc(doc(db, 'companies', companyCode, 'users', otherUserId));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            setOtherUserProfile({
+              photoURL: data.photoURL,
+              displayName: data.name || data.displayName,
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching other user profile:', error);
+        }
+      };
+      fetchOtherUserProfile();
+    }
+  }, [type, otherUserId, companyCode]);
 
   // Load initial messages with pagination
   const loadInitialMessages = async () => {
@@ -582,8 +605,17 @@ export default function DetailChatScreen() {
                 params: { userId: otherUserId as string, companyCode: companyCode as string },
               })
             }
-            style={{ flex: 1 }}
+            style={styles.chatHeaderContent}
           >
+            {otherUserProfile?.photoURL ? (
+              <Image source={{ uri: otherUserProfile.photoURL }} style={styles.headerAvatar} />
+            ) : (
+              <View style={styles.headerAvatarPlaceholder}>
+                <Text style={styles.headerAvatarText}>
+                  {chatName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
             <Text style={styles.chatTitle}>{chatName}</Text>
           </TouchableOpacity>
         ) : type === 'group' ? (
@@ -594,12 +626,22 @@ export default function DetailChatScreen() {
                 params: { groupId: chatId as string, companyCode: companyCode as string },
               })
             }
-            style={{ flex: 1 }}
+            style={styles.chatHeaderContent}
           >
+            <View style={styles.headerAvatarPlaceholder}>
+              <Text style={styles.headerAvatarText}>👥</Text>
+            </View>
             <Text style={styles.chatTitle}>{chatName}</Text>
           </TouchableOpacity>
         ) : (
-          <Text style={styles.chatTitle}>{chatName}</Text>
+          <View style={styles.chatHeaderContent}>
+            <View style={styles.headerAvatarPlaceholder}>
+              <Text style={styles.headerAvatarText}>
+                {chatName.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <Text style={styles.chatTitle}>{chatName}</Text>
+          </View>
         )}
         <View style={styles.headerSpacer} />
       </View>
@@ -939,5 +981,30 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 14,
     color: '#666',
+  },
+  // New styles for header avatar
+  chatHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 8,
+  },
+  headerAvatarPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  headerAvatarText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
   },
 });

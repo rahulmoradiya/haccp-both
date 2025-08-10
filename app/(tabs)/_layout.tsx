@@ -13,7 +13,9 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      initialRouteName="MonitoringPhone"
       screenOptions={{
+        lazy: true,
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,

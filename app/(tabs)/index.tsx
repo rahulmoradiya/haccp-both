@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   SafeAreaView,
   Alert,
   ActivityIndicator,
+  TextInput,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../_layout';
@@ -18,8 +20,10 @@ import {
   where,
   onSnapshot,
   orderBy,
-  doc,
-  getDoc,
+   doc,
+   getDoc,
+   getDocs,
+   limit,
 } from 'firebase/firestore';
 
 interface ChatItem {
@@ -34,6 +38,7 @@ interface ChatItem {
   members?: string[];
   otherUserId?: string;
   memberCount?: number;
+  photoURL?: string; // Add profile picture support
 }
 
 export default function ChatScreen() {
@@ -43,6 +48,9 @@ export default function ChatScreen() {
   
   const [chatItems, setChatItems] = useState<ChatItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [chatMessagesCache, setChatMessagesCache] = useState<Record<string, any[]>>({});
+  const [messageMatches, setMessageMatches] = useState<Record<string, string>>({});
 
   // When app context finishes loading, stop spinner if we don't have a company yet
   useEffect(() => {
@@ -115,6 +123,7 @@ export default function ChatScreen() {
             unreadCount: (data.unreadCount && data.unreadCount[currentUser.uid]) || 0,
             otherUserId: otherParticipant,
             participants: data.participants,
+            photoURL: allUsers.find(u => u.uid === otherParticipant)?.photoURL,
           } as any;
 
           const existing = byPairKey.get(pairKey);
@@ -159,6 +168,7 @@ export default function ChatScreen() {
             unreadCount: data.unreadCount?.[currentUser.uid] || 0,
             members: data.members,
             memberCount: data.members?.length || 0,
+            photoURL: data.photoURL,
           };
         });
         updateChatItems();
@@ -175,7 +185,75 @@ export default function ChatScreen() {
       clearTimeout(timeoutId);
       unsubscribers.forEach(unsubscribe => unsubscribe());
     };
-  }, [currentUser, companyCode]);
+  }, [currentUser, companyCode, allUsers]);
+
+  // Debounced search across chat names, last messages, and recent message history
+  useEffect(() => {
+    if (!companyCode) return;
+    const term = searchQuery.trim().toLowerCase();
+    const handler = setTimeout(async () => {
+      if (term.length < 2) {
+        setMessageMatches({});
+        return;
+      }
+
+      const nextMatches: Record<string, string> = {};
+
+      // Ensure we have recent messages cached and search within them
+      await Promise.all(
+        chatItems.map(async (item) => {
+          // If name or lastMessage already match, we don't need to fetch messages for snippet, but we could still show lastMessage
+          const nameMatch = item.name?.toLowerCase().includes(term);
+          const lastMatch = (item.lastMessage || '').toLowerCase().includes(term);
+          if (nameMatch || lastMatch) {
+            if (lastMatch) nextMatches[item.id] = item.lastMessage;
+            return;
+          }
+
+          let cached = chatMessagesCache[item.id];
+          if (!cached) {
+            try {
+              const messagesCol = collection(
+                db,
+                'companies',
+                companyCode,
+                item.type === 'direct' ? 'conversations' : 'groups',
+                item.id,
+                'messages'
+              );
+              const q = query(messagesCol, orderBy('createdAt', 'desc'), limit(50));
+              const snap = await getDocs(q);
+              cached = snap.docs.map((d) => d.data() as any);
+              setChatMessagesCache((prev) => ({ ...prev, [item.id]: cached! }));
+            } catch (e) {
+              // Ignore fetch failures for search
+              cached = [];
+            }
+          }
+
+          const match = (cached || []).find((m) => (m.text || '').toLowerCase().includes(term));
+          if (match && typeof match.text === 'string') {
+            nextMatches[item.id] = match.text as string;
+          }
+        })
+      );
+
+      setMessageMatches(nextMatches);
+    }, 300);
+
+    return () => clearTimeout(handler);
+  }, [searchQuery, chatItems, companyCode]);
+
+  const filteredItems = useMemo(() => {
+    const term = searchQuery.trim().toLowerCase();
+    if (!term) return chatItems;
+    return chatItems.filter((item) => {
+      const nameMatch = item.name?.toLowerCase().includes(term);
+      const lastMatch = (item.lastMessage || '').toLowerCase().includes(term);
+      const historyMatch = !!messageMatches[item.id];
+      return nameMatch || lastMatch || historyMatch;
+    });
+  }, [chatItems, searchQuery, messageMatches]);
 
   const formatTime = (timestamp: any) => {
     if (!timestamp) return '';
@@ -249,17 +327,21 @@ export default function ChatScreen() {
     >
       <View style={styles.avatarContainer}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {item.type === 'direct' 
-              ? item.name.charAt(0).toUpperCase()
-              : '👥'
-            }
-          </Text>
+          {item.photoURL ? (
+            <Image source={{ uri: item.photoURL }} style={styles.avatarImage} />
+          ) : (
+            <Text style={styles.avatarText}>
+              {item.type === 'direct' 
+                ? item.name.charAt(0).toUpperCase()
+                : '👥'
+              }
+            </Text>
+          )}
         </View>
-        {item.unreadCount && item.unreadCount > 0 && (
+        {(item.unreadCount ?? 0) > 0 && (
           <View style={styles.unreadBadge}>
             <Text style={styles.unreadText}>
-              {item.unreadCount > 99 ? '99+' : item.unreadCount}
+              {(item.unreadCount ?? 0) > 99 ? '99+' : (item.unreadCount ?? 0)}
             </Text>
           </View>
         )}
@@ -278,7 +360,9 @@ export default function ChatScreen() {
         </View>
         
         <Text style={styles.lastMessage} numberOfLines={2}>
-          {item.lastMessage || 'No messages yet'}
+          {searchQuery.trim()
+            ? messageMatches[item.id] || item.lastMessage || 'No messages yet'
+            : item.lastMessage || 'No messages yet'}
         </Text>
       </View>
     </TouchableOpacity>
@@ -304,8 +388,21 @@ export default function ChatScreen() {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.searchContainer}>
+        <TextInput
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search by name, message, or history"
+          placeholderTextColor="#999"
+          style={styles.searchInput}
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+        />
+      </View>
+
       <FlatList
-        data={chatItems}
+        data={filteredItems}
         renderItem={renderChatItem}
         keyExtractor={(item) => item.id}
         style={styles.chatList}
@@ -365,6 +462,17 @@ const styles = StyleSheet.create({
   chatList: {
     flex: 1,
   },
+  searchContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  searchInput: {
+    height: 40,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#f1f1f1',
+    color: '#000',
+  },
   chatListContent: {
     paddingHorizontal: 16,
     paddingBottom: 16,
@@ -394,6 +502,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 25,
   },
   unreadBadge: {
     position: 'absolute',
