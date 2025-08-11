@@ -195,9 +195,9 @@ export default function RootLayout() {
             <Stack.Screen name="chat-screens/TeamMemberProfile" options={{ headerShown: false }} />
             <Stack.Screen name="chat-screens/SearchUsers" options={{ headerShown: false }} />
             <Stack.Screen name="chat-screens/CreateGroup" options={{ headerShown: false }} />
-            <Stack.Screen name="task-screens/DetailTaskScreen" options={{ headerShown: false }} />
-            <Stack.Screen name="task-screens/ChecklistTaskScreen" options={{ headerShown: false }} />
-            <Stack.Screen name="task-screens/PersonalTaskScreen" options={{ headerShown: false }} />
+            <Stack.Screen name="task-screens/DetailTaskScreen" options={{ headerShown: true }} />
+            <Stack.Screen name="task-screens/ChecklistTaskScreen" options={{ headerShown: true }} />
+            <Stack.Screen name="task-screens/PersonalTaskScreen" options={{ headerShown: true }} />
             <Stack.Screen name="task-screens/SOPDetailScreen" options={{ headerShown: false }} />
             <Stack.Screen name="+not-found" />
           </Stack>

@@ -132,7 +132,7 @@ export default function ChecklistTaskScreen() {
   if (loading) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Checklist Task' }} />
+        <Stack.Screen options={{ title: 'Checklist Task', headerBackTitle: '' }} />
         <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
           <ActivityIndicator size="large" color="#1976D2" />
           <Text style={{ marginTop: 16, color: '#666' }}>Loading checklist...</Text>
@@ -144,7 +144,7 @@ export default function ChecklistTaskScreen() {
   if (error) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Checklist Task' }} />
+        <Stack.Screen options={{ title: 'Checklist Task', headerBackTitle: '' }} />
         <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
           <Text style={{ color: 'red', textAlign: 'center', marginBottom: 16 }}>{error}</Text>
           <Text style={{ color: '#666', textAlign: 'center' }}>Task: {JSON.stringify(task, null, 2)}</Text>
@@ -155,7 +155,7 @@ export default function ChecklistTaskScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Checklist Task' }} />
+      <Stack.Screen options={{ title: 'Checklist Task', headerBackTitle: '' }} />
     <View style={styles.container}>
         <View style={styles.titleRow}>
       <Text style={styles.taskTitle}>{linkedItem?.title || task.title || 'Untitled Task'}</Text>

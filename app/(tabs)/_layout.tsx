@@ -38,7 +38,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="MonitoringPhone"
         options={{
-          title: 'Personal Tasks',
+          title: 'Monitoring Task',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="checklist" color={color} />, // or another task-related icon
         }}
       />

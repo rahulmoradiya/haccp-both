@@ -3,7 +3,7 @@ import { ThemedView } from '@/components/ThemedView';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Button, Image, StyleSheet, Text, View, ScrollView } from 'react-native';
+import { ActivityIndicator, Button, Image, StyleSheet, Text, View, ScrollView, TouchableOpacity, SafeAreaView } from 'react-native';
 import { app, db } from '../../firebase';
 import { useAuth } from '../_layout';
 
@@ -68,102 +68,135 @@ export default function ProfileScreen() {
   }
 
   return (
-    <ScrollView style={styles.scrollContainer}>
-      <View style={styles.container}>
-        <ThemedText type="title" style={styles.pageTitle}>Profile</ThemedText>
-        
-        {/* User Avatar and Basic Info */}
-        <View style={styles.userSection}>
-          {userInfo.photo ? (
-            <Image source={{ uri: userInfo.photo }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatarPlaceholder}>
-              <ThemedText style={styles.avatarText}>
-                {userInfo.name ? userInfo.name.charAt(0).toUpperCase() : 'U'}
-              </ThemedText>
-            </View>
-          )}
-          <ThemedText type="defaultSemiBold" style={styles.name}>
-            {userInfo.name || 'No Name'}
-          </ThemedText>
-          <ThemedText style={styles.email}>{userInfo.email}</ThemedText>
-        </View>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView style={styles.scrollContainer}>
+        <View style={styles.container}>
+          <ThemedText type="title" style={styles.pageTitle}>Profile</ThemedText>
+          
+          {/* User Avatar and Basic Info */}
+          <View style={styles.userSection}>
+            {userInfo.photo ? (
+              <Image source={{ uri: userInfo.photo }} style={styles.avatar} />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <ThemedText style={styles.avatarText}>
+                  {userInfo.name ? userInfo.name.charAt(0).toUpperCase() : 'U'}
+                </ThemedText>
+              </View>
+            )}
+            <ThemedText type="defaultSemiBold" style={styles.name}>
+              {userInfo.name || 'No Name'}
+            </ThemedText>
+            <ThemedText style={styles.email}>{userInfo.email}</ThemedText>
+          </View>
 
-        {/* User Details */}
-        <View style={styles.section}>
-          <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>User Details</ThemedText>
-          <ThemedText style={styles.detailItem}>
-            Role: {profileData?.role || 'Not set'}
-          </ThemedText>
-          <ThemedText style={styles.detailItem}>
-            Department: {profileData?.departmentName || 'Not set'}
-          </ThemedText>
-          <ThemedText style={styles.detailItem}>
-            Responsibilities: {Array.isArray(profileData?.responsibilities) ? profileData.responsibilities.join(', ') : 'Not set'}
-          </ThemedText>
-        </View>
-
-        {/* Company Information */}
-        {companyInfo && Object.keys(companyInfo).length > 0 && (
+          {/* User Details */}
           <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>Company Information</ThemedText>
-              {/* Company Logo */}
-              {companyInfo.logoUrl && (
-                <Image source={{ uri: companyInfo.logoUrl }} style={styles.companyLogo} />
+            <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>User Details</ThemedText>
+            <ThemedText style={styles.detailItem}>
+              Role: {profileData?.role || 'Not set'}
+            </ThemedText>
+            <ThemedText style={styles.detailItem}>
+              Department: {profileData?.departmentName || 'Not set'}
+            </ThemedText>
+            <ThemedText style={styles.detailItem}>
+              Responsibilities: {Array.isArray(profileData?.responsibilities) ? profileData.responsibilities.join(', ') : 'Not set'}
+            </ThemedText>
+          </View>
+
+          {/* Company Information */}
+          {companyInfo && Object.keys(companyInfo).length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>Company Information</ThemedText>
+                {/* Company Logo */}
+                {companyInfo.logoUrl && (
+                  <Image source={{ uri: companyInfo.logoUrl }} style={styles.companyLogo} />
+                )}
+              </View>
+              
+              {companyInfo.name && (
+                <ThemedText style={styles.detailItem}>
+                  Company: {companyInfo.name}
+                </ThemedText>
+              )}
+              {companyInfo.address && (
+                <ThemedText style={styles.detailItem}>
+                  Address: {companyInfo.address}
+                </ThemedText>
+              )}
+              {companyInfo.country && (
+                <ThemedText style={styles.detailItem}>
+                  Country: {companyInfo.country}
+                </ThemedText>
+              )}
+              {companyInfo.email && (
+                <ThemedText style={styles.detailItem}>
+                  Company Email: {companyInfo.email}
+                </ThemedText>
+              )}
+              {companyInfo.regNumber && (
+                <ThemedText style={styles.detailItem}>
+                  Registration: {companyInfo.regNumber}
+                </ThemedText>
+              )}
+              {companyInfo.vat && (
+                <ThemedText style={styles.detailItem}>
+                  VAT: {companyInfo.vat}
+                </ThemedText>
+              )}
+              {companyInfo.language && (
+                <ThemedText style={styles.detailItem}>
+                  Language: {companyInfo.language}
+                </ThemedText>
+              )}
+              {companyInfo.dateFormat && (
+                <ThemedText style={styles.detailItem}>
+                  Date Format: {companyInfo.dateFormat}
+                </ThemedText>
+              )}
+              {companyInfo.businessType && (
+                <ThemedText style={styles.detailItem}>
+                  Business Type: {companyInfo.businessType}
+                </ThemedText>
+              )}
+              {companyInfo.timeZone && (
+                <ThemedText style={styles.detailItem}>
+                  Time Zone: {companyInfo.timeZone}
+                </ThemedText>
+              )}
+              {companyInfo.totalEmployee && (
+                <ThemedText style={styles.detailItem}>
+                  Total Employees: {companyInfo.totalEmployee}
+                </ThemedText>
+              )}
+              {companyInfo.volumeUnits && (
+                <ThemedText style={styles.detailItem}>
+                  Measuring Units: {companyInfo.volumeUnits}
+                </ThemedText>
               )}
             </View>
-            
-            {companyInfo.name && (
-              <ThemedText style={styles.detailItem}>
-                Company: {companyInfo.name}
-              </ThemedText>
-            )}
-            {companyInfo.address && (
-              <ThemedText style={styles.detailItem}>
-                Address: {companyInfo.address}
-              </ThemedText>
-            )}
-            {companyInfo.country && (
-              <ThemedText style={styles.detailItem}>
-                Country: {companyInfo.country}
-              </ThemedText>
-            )}
-            {companyInfo.email && (
-              <ThemedText style={styles.detailItem}>
-                Company Email: {companyInfo.email}
-              </ThemedText>
-            )}
-            {companyInfo.regNumber && (
-              <ThemedText style={styles.detailItem}>
-                Registration: {companyInfo.regNumber}
-              </ThemedText>
-            )}
-            {companyInfo.vat && (
-              <ThemedText style={styles.detailItem}>
-                VAT: {companyInfo.vat}
-              </ThemedText>
-            )}
-            {companyInfo.language && (
-              <ThemedText style={styles.detailItem}>
-                Language: {companyInfo.language}
-              </ThemedText>
-            )}
-          </View>
-        )}
+          )}
 
-        <View style={{ marginTop: 24, width: '100%' }}>
-          <Button title="Logout" onPress={logout} color="#d9534f" />
+          {/* Logout Section */}
+          <View style={[styles.section, { marginBottom: 70 }]}>
+            <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+              <ThemedText style={styles.logoutButtonText}>Logout</ThemedText>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContainer: {
+  safeArea: {
     flex: 1,
     backgroundColor: '#1976d2',
+  },
+  scrollContainer: {
+    flex: 1,
   },
   container: {
     flex: 1,
@@ -257,5 +290,26 @@ const styles = StyleSheet.create({
     height: 40,
     resizeMode: 'contain',
     borderRadius: 6,
+  },
+  logoutButton: {
+    backgroundColor: '#d9534f',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  logoutButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 }); 

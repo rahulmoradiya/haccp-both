@@ -20,7 +20,7 @@ export default function DetailTaskScreen() {
   // Media state
   const [mediaAttachments, setMediaAttachments] = useState<string[]>([]);
   
-    // Linked Item state
+  // Linked Item state
   const [linkedItemData, setLinkedItemData] = useState<any>(null);
   const [linkedItemLoading, setLinkedItemLoading] = useState(false);
   const [linkedItemError, setLinkedItemError] = useState<string | null>(null);
@@ -61,6 +61,7 @@ export default function DetailTaskScreen() {
   useEffect(() => {
     if (companyCode && task.linkedItemId) {
       fetchLinkedItemData();
+      // No profile-based unit fetching
     }
   }, [companyCode]);
 
@@ -93,9 +94,10 @@ export default function DetailTaskScreen() {
     Alert.alert('Media Attachment', 'Camera/Gallery functionality would be implemented here');
   };
 
-  // Function to update a specific field value
+  // Function to update a specific field value (no automatic unit conversion)
   const updateFieldValue = (fieldId: string, value: any) => {
     console.log('Updating field:', fieldId, 'with value:', value);
+    
     setDynamicFieldValues(prev => ({
       ...prev,
       [fieldId]: value
@@ -137,10 +139,23 @@ export default function DetailTaskScreen() {
 
     switch (field.type) {
       case 'temperature':
+        const preferredTempUnit = field.config?.unit || '°C';
+        const tempMin = field.config?.min;
+        const tempMax = field.config?.max;
         return (
           <View key={fieldId} style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>🌡️ {field.label || 'Temperature'}</Text>
+              {(tempMin !== undefined || tempMax !== undefined) && (
+                <Text style={styles.rangeHint}>
+                  {tempMin !== undefined && tempMax !== undefined 
+                    ? `Range: ${tempMin} - ${tempMax} ${preferredTempUnit}`
+                    : tempMin !== undefined 
+                      ? `Min: ${tempMin} ${preferredTempUnit}`
+                      : `Max: ${tempMax} ${preferredTempUnit}`
+                  }
+                </Text>
+              )}
             </View>
             <View style={styles.inputContainer}>
               <TextInput
@@ -149,61 +164,133 @@ export default function DetailTaskScreen() {
                 value={fieldValue.temperature || ''}
                 onChangeText={(value) => updateFieldValue(fieldId, {
                   ...fieldValue,
-                  temperature: value
+                  temperature: value,
+                  temperatureUnit: preferredTempUnit
                 })}
                 keyboardType="numeric"
                 placeholderTextColor="#999"
               />
               <View style={styles.unitContainer}>
                 <TouchableOpacity
-                  style={[styles.unitButton, (fieldValue.temperatureUnit || '°C') === '°C' && styles.unitButtonActive]}
-                  onPress={() => updateFieldValue(fieldId, {
-                    ...fieldValue,
-                    temperatureUnit: '°C'
-                  })}
+                  style={[styles.unitButton, styles.unitButtonActive]}
+                  disabled={true}
                 >
-                  <Text style={[styles.unitButtonText, (fieldValue.temperatureUnit || '°C') === '°C' && styles.unitButtonTextActive]}>°C</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.unitButton, (fieldValue.temperatureUnit || '°C') === '°F' && styles.unitButtonActive]}
-                  onPress={() => updateFieldValue(fieldId, {
-                    ...fieldValue,
-                    temperatureUnit: '°F'
-                  })}
-                >
-                  <Text style={[styles.unitButtonText, (fieldValue.temperatureUnit || '°C') === '°F' && styles.unitButtonTextActive]}>°F</Text>
+                  <Text style={[styles.unitButtonText, styles.unitButtonTextActive]}>{preferredTempUnit}</Text>
                 </TouchableOpacity>
               </View>
             </View>
             {fieldValue.temperature && (
-              <Text style={styles.valueDisplay}>
-                Current Value: {fieldValue.temperature} {fieldValue.temperatureUnit || '°C'}
-              </Text>
+              <View style={styles.valueDisplayContainer}>
+                <Text style={styles.valueDisplay}>
+                  Value: {fieldValue.temperature} {preferredTempUnit}
+                </Text>
+              </View>
             )}
           </View>
         );
 
-      case 'amount':
+      case 'amount': {
+        const category = field?.config?.measurementCategory || 'amount';
+        const configuredUnit = field?.config?.unit || '';
+        const amountMin = field?.config?.min;
+        const amountMax = field?.config?.max;
+        const titlePrefix = category === 'temperature' ? '🌡️' : '📊';
         return (
           <View key={fieldId} style={styles.card}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>📊 {field.label || 'Amount'}</Text>
+              <Text style={styles.cardTitle}>{titlePrefix} {field.label || (category === 'temperature' ? 'Temperature' : 'Amount')}</Text>
+              {(amountMin !== undefined || amountMax !== undefined) && (
+                <Text style={styles.rangeHint}>
+                  {amountMin !== undefined && amountMax !== undefined 
+                    ? `Range: ${amountMin} - ${amountMax} ${configuredUnit}`
+                    : amountMin !== undefined 
+                      ? `Min: ${amountMin} ${configuredUnit}`
+                      : `Max: ${amountMax} ${configuredUnit}`
+                  }
+                </Text>
+              )}
             </View>
             <View style={styles.inputContainer}>
               <TextInput
                 style={styles.amountInput}
-                placeholder="Enter amount..."
-                value={fieldValue.amount || ''}
+                placeholder={category === 'temperature' ? 'Enter temperature...' : 'Enter amount...'}
+                value={(category === 'temperature' ? fieldValue.temperature : fieldValue.amount) || ''}
                 onChangeText={(value) => updateFieldValue(fieldId, {
                   ...fieldValue,
-                  amount: value
+                  ...(category === 'temperature' ? { temperature: value, temperatureUnit: configuredUnit } : { amount: value, amountUnit: configuredUnit })
                 })}
                 keyboardType="numeric"
                 placeholderTextColor="#999"
               />
+              {!!configuredUnit && (
+                <View style={styles.unitContainer}>
+                  <TouchableOpacity style={[styles.unitButton, styles.unitButtonActive]} disabled>
+                    <Text style={[styles.unitButtonText, styles.unitButtonTextActive]}>{configuredUnit}</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
+            {(category === 'temperature' ? fieldValue.temperature : fieldValue.amount) && (
+              <View style={styles.valueDisplayContainer}>
+                <Text style={styles.valueDisplay}>
+                  Value: {(category === 'temperature' ? fieldValue.temperature : fieldValue.amount)} {configuredUnit}
+                </Text>
+              </View>
+            )}
           </View>
         );
+      }
+
+      case 'numeric': {
+        const numericMin = field?.config?.min;
+        const numericMax = field?.config?.max;
+        const numericUnit = field?.config?.unit || '';
+        return (
+          <View key={fieldId} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>🔢 {field.label || 'Numeric Value'}</Text>
+              {(numericMin !== undefined || numericMax !== undefined) && (
+                <Text style={styles.rangeHint}>
+                  {numericMin !== undefined && numericMax !== undefined 
+                    ? `Range: ${numericMin} - ${numericMax} ${numericUnit}`
+                    : numericMin !== undefined 
+                      ? `Min: ${numericMin} ${numericUnit}`
+                      : `Max: ${numericMax} ${numericUnit}`
+                  }
+                </Text>
+              )}
+            </View>
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.numericInput}
+                placeholder="Enter value..."
+                value={fieldValue.numeric || ''}
+                onChangeText={(value) => updateFieldValue(fieldId, {
+                  ...fieldValue,
+                  numeric: value,
+                  numericUnit: numericUnit
+                })}
+                keyboardType="numeric"
+                placeholderTextColor="#999"
+              />
+              {!!numericUnit && (
+                <View style={styles.unitContainer}>
+                  <TouchableOpacity style={[styles.unitButton, styles.unitButtonActive]} disabled>
+                    <Text style={[styles.unitButtonText, styles.unitButtonTextActive]}>{numericUnit}</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+            {fieldValue.numeric && (
+              <View style={styles.valueDisplayContainer}>
+                <Text style={styles.valueDisplay}>
+                  Value: {fieldValue.numeric} {numericUnit}
+                </Text>
+              </View>
+            )}
+          </View>
+        );
+      }
 
       case 'text':
         return (
@@ -228,21 +315,65 @@ export default function DetailTaskScreen() {
         );
 
       case 'multiple':
+      case 'multi':
+        const options = field.config?.options || [];
+        const selectedOptions = fieldValue.selectedOptions || {};
+        const selectedCount = Object.values(selectedOptions).filter(Boolean).length;
+        const allSelected = options.length > 0 && selectedCount === options.length;
+        const someSelected = selectedCount > 0 && selectedCount < options.length;
+        
         return (
           <View key={fieldId} style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>☑️ {field.label || 'Multiple Choice'}</Text>
+              {options.length > 0 && (
+                <Text style={styles.selectionCount}>
+                  {selectedCount} of {options.length} selected
+                </Text>
+              )}
             </View>
+            {options.length > 1 && (
+              <View style={styles.selectAllContainer}>
+                <TouchableOpacity
+                  style={styles.selectAllButton}
+                  onPress={() => {
+                    const newSelectedOptions: {[key: string]: boolean} = {};
+                    if (allSelected) {
+                      // Deselect all
+                      options.forEach((option: string) => newSelectedOptions[option] = false);
+                    } else {
+                      // Select all
+                      options.forEach((option: string) => newSelectedOptions[option] = true);
+                    }
+                    updateFieldValue(fieldId, {
+                      ...fieldValue,
+                      selectedOptions: newSelectedOptions
+                    });
+                  }}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    allSelected ? styles.checkboxChecked : styles.checkboxUnchecked
+                  ]}>
+                    {allSelected && <Text style={styles.checkmark}>✓</Text>}
+                    {someSelected && <Text style={styles.checkmark}>-</Text>}
+                  </View>
+                  <Text style={styles.selectAllText}>
+                    {allSelected ? 'Deselect All' : 'Select All'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
             <View style={styles.multipleContainer}>
-              {(field.options || []).map((option: string, optionIndex: number) => (
+              {options.map((option: string, optionIndex: number) => (
                 <TouchableOpacity
                   key={optionIndex}
                   style={[
                     styles.multipleOption,
-                    (fieldValue.selectedOptions || {})[option] && styles.multipleOptionSelected
+                    selectedOptions[option] && styles.multipleOptionSelected
                   ]}
                   onPress={() => {
-                    const currentOptions = fieldValue.selectedOptions || {};
+                    const currentOptions = selectedOptions;
                     updateFieldValue(fieldId, {
                       ...fieldValue,
                       selectedOptions: {
@@ -252,13 +383,26 @@ export default function DetailTaskScreen() {
                     });
                   }}
                 >
+                  <View style={[
+                    styles.checkbox,
+                    selectedOptions[option] ? styles.checkboxChecked : styles.checkboxUnchecked
+                  ]}>
+                    {selectedOptions[option] && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
                   <Text style={[
                     styles.multipleOptionText,
-                    (fieldValue.selectedOptions || {})[option] && styles.multipleOptionTextSelected
+                    selectedOptions[option] && styles.multipleOptionTextSelected
                   ]}>{option}</Text>
                 </TouchableOpacity>
               ))}
             </View>
+            {selectedCount > 0 && (
+              <View style={styles.valueDisplayContainer}>
+                <Text style={styles.valueDisplay}>
+                  Selected: {Object.keys(selectedOptions).filter(key => selectedOptions[key]).join(', ')}
+                </Text>
+              </View>
+            )}
           </View>
         );
 
@@ -269,7 +413,7 @@ export default function DetailTaskScreen() {
               <Text style={styles.cardTitle}>⭕ {field.label || 'Single Choice'}</Text>
             </View>
             <View style={styles.singleContainer}>
-              {(field.options || []).map((option: string, optionIndex: number) => (
+              {(field.config?.options || []).map((option: string, optionIndex: number) => (
                 <TouchableOpacity
                   key={optionIndex}
                   style={[
@@ -358,11 +502,15 @@ export default function DetailTaskScreen() {
         );
 
       default:
+        console.log('Unknown field type:', field.type, 'Field data:', field);
         return (
           <View key={fieldId} style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>❓ {field.label || `Unknown Field Type: ${field.type}`}</Text>
             </View>
+            <Text style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+              Type: {field.type} | Options: {JSON.stringify(field.config?.options || [])}
+            </Text>
           </View>
         );
     }
@@ -370,7 +518,7 @@ export default function DetailTaskScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Detail Task' }} />
+      <Stack.Screen options={{ title: 'Detail Task', headerBackTitle: '' }} />
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.titleRow}>
           <Text style={styles.title}>{task.title || 'Untitled Task'}</Text>
@@ -394,6 +542,24 @@ export default function DetailTaskScreen() {
           </Pressable>
         </View>
 
+        {/* Linked Item Section */}
+        {task.linkedItemId && (
+          <View style={styles.linkedItemContainer}>
+            <View style={styles.taskDetailRow}>
+              <Text style={styles.taskDetailLabel}>Linked Item:</Text>
+              {linkedItemLoading ? (
+                <Text style={styles.linkedItemText}>Loading...</Text>
+              ) : linkedItemError ? (
+                <Text style={styles.linkedItemError}>{linkedItemError}</Text>
+              ) : linkedItemData ? (
+                <Text style={styles.linkedItemText}>
+                  {linkedItemData.name || linkedItemData.title || 'Unnamed Item'}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        )}
+
         {/* Description Section */}
         <View style={styles.descriptionContainer}>
           <Text style={styles.descriptionText}>
@@ -412,23 +578,9 @@ export default function DetailTaskScreen() {
           <View style={styles.taskDetailRow}>
             <Text style={styles.taskDetailLabel}>Status:</Text>
             <View style={[styles.statusBadge, { backgroundColor: getStatusColor(task.status) }]}>
-                          <Text style={styles.statusText}>{task.status || 'Active'}</Text>
-          </View>
-          {task.linkedItemId && (
-            <View style={styles.taskDetailRow}>
-              <Text style={styles.taskDetailLabel}>Linked Item:</Text>
-              {linkedItemLoading ? (
-                <Text style={styles.linkedItemText}>Loading...</Text>
-              ) : linkedItemError ? (
-                <Text style={styles.linkedItemError}>{linkedItemError}</Text>
-              ) : linkedItemData ? (
-                <Text style={styles.linkedItemText}>
-                  {linkedItemData.name || linkedItemData.title || 'Unnamed Item'}
-                </Text>
-              ) : null}
+              <Text style={styles.statusText}>{task.status || 'Active'}</Text>
             </View>
-          )}
-        </View>
+          </View>
         </View>
 
         {/* Dynamic Form Cards */}
@@ -556,6 +708,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
   },
+  companyUnitHint: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
+  },
+  rangeHint: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -608,12 +771,13 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   numericInput: {
-    height: 48,
+    flex: 1,
+    height: 56,
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 8,
-    paddingHorizontal: 12,
-    fontSize: 16,
+    paddingHorizontal: 16,
+    fontSize: 18,
     color: '#333',
     backgroundColor: '#fafafa',
   },
@@ -626,17 +790,18 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   unitButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#f5f5f5',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#1976D2',
+    borderRadius: 8,
   },
   unitButtonActive: {
     backgroundColor: '#1976D2',
   },
   unitButtonText: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: '#fff',
   },
   unitButtonTextActive: {
     color: '#fff',
@@ -659,6 +824,10 @@ const styles = StyleSheet.create({
   checkboxChecked: {
     backgroundColor: '#1976D2',
     borderColor: '#1976D2',
+  },
+  checkboxUnchecked: {
+    backgroundColor: '#fff',
+    borderColor: '#ddd',
   },
   checkmark: {
     color: '#fff',
@@ -873,5 +1042,50 @@ const styles = StyleSheet.create({
   locationIcon: {
     fontSize: 18,
     color: '#E53935',
+  },
+  valueDisplayContainer: {
+    marginTop: 8,
+  },
+  convertedValueDisplay: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  linkedItemContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  linkedItemLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  selectionCount: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  selectAllContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  selectAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#f5f5f5',
+  },
+  selectAllText: {
+    fontSize: 16,
+    color: '#1976D2',
+    fontWeight: '600',
+    marginLeft: 8,
   },
 }); 
