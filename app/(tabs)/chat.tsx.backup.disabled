@@ -66,8 +66,8 @@ export default function ChatScreen() {
         hasUser: !!currentUser, 
         companyCode 
       });
-        return;
-      }
+      return;
+    }
 
     console.log('Setting up chat listeners for company:', companyCode);
     const unsubscribers: (() => void)[] = [];
@@ -321,7 +321,7 @@ export default function ChatScreen() {
   };
 
   const renderChatItem = ({ item }: { item: ChatItem }) => (
-      <TouchableOpacity
+    <TouchableOpacity
       style={styles.chatItem}
       onPress={() => handleChatPress(item)}
     >
@@ -365,7 +365,7 @@ export default function ChatScreen() {
             : item.lastMessage || 'No messages yet'}
         </Text>
       </View>
-      </TouchableOpacity>
+    </TouchableOpacity>
   );
 
   if (loading) {
@@ -374,7 +374,7 @@ export default function ChatScreen() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={styles.loadingText}>Loading chats...</Text>
-      </View>
+        </View>
       </SafeAreaView>
     );
   }
@@ -399,8 +399,8 @@ export default function ChatScreen() {
           autoCorrect={false}
           clearButtonMode="while-editing"
         />
-        </View>
-      
+      </View>
+
       <FlatList
         data={filteredItems}
         renderItem={renderChatItem}

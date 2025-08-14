@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, TouchableOpacity, Alert, Pressable, TextInput, Modal } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, ScrollView, TouchableOpacity, Alert, Pressable, TextInput, Modal, Image } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RouteProp, useRoute } from '@react-navigation/native';
-import { getFirestore, doc, getDoc, getDocs, collection } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, getDocs, collection, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { app } from '../../firebase';
 import { Stack, useRouter } from 'expo-router';
 
@@ -49,6 +51,18 @@ export default function ChecklistTaskScreen() {
   type ItemStatus = 'completed' | 'not_completed' | null;
   const [checked, setChecked] = useState<ItemStatus[]>(() => checklist.map(() => null));
   const [deviations, setDeviations] = useState<string[]>(() => checklist.map(() => ''));
+  const [hasChanges, setHasChanges] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [isLoadingDraft, setIsLoadingDraft] = useState(true);
+  
+  // Task completion state
+  const [isTaskCompleted, setIsTaskCompleted] = useState(false);
+  const [completedBy, setCompletedBy] = useState<string | null>(null);
+  const [completedAt, setCompletedAt] = useState<string | null>(null);
+  const [isCheckingCompletion, setIsCheckingCompletion] = useState(true);
+  
+  // User profile state
+  const [completedByUser, setCompletedByUser] = useState<{ name: string; photoURL: string } | null>(null);
 
   // Get company code from current user
   useEffect(() => {
@@ -87,12 +101,282 @@ export default function ChecklistTaskScreen() {
     fetchCompanyCode();
   }, []);
 
+  // Function to fetch user profile data
+  const fetchUserProfile = async (userId: string) => {
+    if (!companyCode) {
+      console.log('❌ No companyCode available for fetching user profile');
+      return null;
+    }
+    
+    console.log('🔍 Fetching user profile for:', userId, 'in company:', companyCode);
+    
+    try {
+      const userRef = doc(db, 'companies', companyCode, 'users', userId);
+      const userSnap = await getDoc(userRef);
+      
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        console.log('✅ User data found:', userData);
+        return {
+          name: userData.name || userData.displayName || 'Unknown User',
+          photoURL: userData.photoURL || null,
+        };
+      } else {
+        console.log('❌ User document does not exist for ID:', userId);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching user profile:', error);
+    }
+    return null;
+  };
+
   // Fetch linked item when companyCode is available
   useEffect(() => {
     if (companyCode) {
       fetchLinkedItem();
     }
   }, [companyCode]);
+
+  // Check if task is already completed
+  useEffect(() => {
+    const checkTaskCompletion = async () => {
+      if (!companyCode) return;
+      
+      try {
+        const taskId = task.id || task._id;
+        const checklistCollectedRef = collection(db, 'companies', companyCode, 'checklistCollected');
+        const completionQuery = query(checklistCollectedRef, where('taskId', '==', taskId));
+        const completionSnapshot = await getDocs(completionQuery);
+        
+        if (!completionSnapshot.empty) {
+          const completionData = completionSnapshot.docs[0].data() as any;
+          setIsTaskCompleted(true);
+          setCompletedBy(completionData.completedBy);
+          setCompletedAt(completionData.completedAt?.toDate?.()?.toISOString() || completionData.completedAt);
+          
+          // Fetch user profile data
+          if (completionData.completedBy) {
+            console.log('👤 Fetching profile for completedBy:', completionData.completedBy);
+            const userProfile = await fetchUserProfile(completionData.completedBy);
+            console.log('👤 User profile result:', userProfile);
+            setCompletedByUser(userProfile);
+          } else {
+            console.log('❌ No completedBy field in completion data');
+          }
+          
+          // Load the completed data into the form
+          if (completionData.checklistItems) {
+            const completedChecked = completionData.checklistItems.map((item: any) => item.status);
+            const completedDeviations = completionData.checklistItems.map((item: any) => item.deviation || '');
+            
+            // Ensure arrays match checklist length
+            const adjustedChecked = [...completedChecked];
+            const adjustedDeviations = [...completedDeviations];
+            
+            while (adjustedChecked.length < checklist.length) {
+              adjustedChecked.push(null);
+            }
+            while (adjustedDeviations.length < checklist.length) {
+              adjustedDeviations.push('');
+            }
+            
+            setChecked(adjustedChecked.slice(0, checklist.length));
+            setDeviations(adjustedDeviations.slice(0, checklist.length));
+          }
+          
+          console.log('Task already completed by:', completionData.completedBy);
+        }
+      } catch (error) {
+        console.error('Error checking task completion:', error);
+      } finally {
+        setIsCheckingCompletion(false);
+      }
+    };
+    
+    checkTaskCompletion();
+  }, [companyCode, task.id]);
+
+  // Load draft from AsyncStorage when component mounts
+  useEffect(() => {
+    const loadDraft = async () => {
+      try {
+        const taskId = task.id || task._id;
+        const draftKey = `draft_${taskId}`;
+        const savedDraft = await AsyncStorage.getItem(draftKey);
+        
+        if (savedDraft) {
+          const draftData = JSON.parse(savedDraft);
+          const savedChecked = draftData.checked || [];
+          const savedDeviations = draftData.deviations || [];
+          
+          // Ensure arrays match checklist length
+          const adjustedChecked = [...savedChecked];
+          const adjustedDeviations = [...savedDeviations];
+          
+          while (adjustedChecked.length < checklist.length) {
+            adjustedChecked.push(null);
+          }
+          while (adjustedDeviations.length < checklist.length) {
+            adjustedDeviations.push('');
+          }
+          
+          setChecked(adjustedChecked.slice(0, checklist.length));
+          setDeviations(adjustedDeviations.slice(0, checklist.length));
+          console.log('Draft loaded with adjusted arrays:', {
+            originalChecked: savedChecked,
+            adjustedChecked: adjustedChecked.slice(0, checklist.length),
+            checklistLength: checklist.length
+          });
+        }
+      } catch (error) {
+        console.error('Error loading draft:', error);
+      } finally {
+        setIsLoadingDraft(false);
+      }
+    };
+    
+    loadDraft();
+  }, [task.id]);
+
+  // Check for changes in checklist
+  useEffect(() => {
+    const hasAnyChanges = checked.some(status => status !== null) || deviations.some(deviation => deviation.trim() !== '');
+    setHasChanges(hasAnyChanges);
+  }, [checked, deviations]);
+
+  // Save draft function
+  const saveDraft = async () => {
+    try {
+      const taskId = task.id || task._id;
+      const draftKey = `draft_${taskId}`;
+      const draftData = {
+        taskId: taskId,
+        checked: checked,
+        deviations: deviations,
+        timestamp: new Date().toISOString(),
+      };
+      
+      await AsyncStorage.setItem(draftKey, JSON.stringify(draftData));
+      console.log('Draft saved to AsyncStorage:', draftData);
+      setDraftSaved(true);
+      
+      // Show success message
+      Alert.alert('Success', 'Draft saved successfully!');
+      
+      // Reset the saved indicator after 3 seconds
+      setTimeout(() => setDraftSaved(false), 3000);
+    } catch (error) {
+      console.error('Error saving draft:', error);
+      Alert.alert('Error', 'Failed to save draft. Please try again.');
+    }
+  };
+
+  // Clear draft when task is completed
+  const clearDraft = async () => {
+    try {
+      const taskId = task.id || task._id;
+      const draftKey = `draft_${taskId}`;
+      await AsyncStorage.removeItem(draftKey);
+      console.log('Draft cleared for task:', taskId);
+    } catch (error) {
+      console.error('Error clearing draft:', error);
+    }
+  };
+
+  // Submit checklist report to Firebase
+  const submitReport = async () => {
+    try {
+      if (!companyCode) {
+        Alert.alert('Error', 'Company information not available. Please try again.');
+        return;
+      }
+
+      const auth = require('firebase/auth').getAuth(app);
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        Alert.alert('Error', 'User not authenticated. Please log in again.');
+        return;
+      }
+
+      // Validate that all checklist items have been completed
+      console.log('Checklist length:', checklist.length);
+      console.log('Checked array length:', checked.length);
+      console.log('Checklist status:', checked);
+      
+      // Ensure checked array matches checklist length
+      if (checked.length !== checklist.length) {
+        console.log('Array length mismatch, initializing checked array');
+        setChecked(prev => {
+          const newChecked = [...prev];
+          while (newChecked.length < checklist.length) {
+            newChecked.push(null);
+          }
+          return newChecked.slice(0, checklist.length);
+        });
+        Alert.alert('Error', 'Please try submitting again after the form updates.');
+        return;
+      }
+      
+      const incompleteItems = checked.filter(status => status === null);
+      console.log('Incomplete items count:', incompleteItems.length);
+      
+      if (incompleteItems.length > 0) {
+        Alert.alert(
+          'Incomplete Checklist', 
+          `Please complete all checklist items before submitting the report. (${incompleteItems.length} items remaining)`,
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      // Prepare the report data
+      const reportData = {
+        taskId: task.id || task._id,
+        taskTitle: task.title || 'Untitled Task',
+        taskType: 'checklist',
+        checklistItems: checklist.map((item, index) => ({
+          title: item.title,
+          status: checked[index],
+          deviation: deviations[index] || null,
+        })),
+        completedBy: currentUser.uid,
+        completedAt: serverTimestamp(),
+        companyCode: companyCode,
+        linkedItemId: task.linkedItemId || null,
+        linkedItemTitle: linkedItem?.title || null,
+        totalItems: checklist.length,
+        completedItems: checked.filter(status => status === 'completed').length,
+        notCompletedItems: checked.filter(status => status === 'not_completed').length,
+        hasDeviations: deviations.some(deviation => deviation.trim() !== ''),
+        deviations: deviations.filter(deviation => deviation.trim() !== ''),
+      };
+
+      // Save to checklistCollected collection
+      const checklistCollectedRef = collection(db, 'companies', companyCode, 'checklistCollected');
+      const docRef = await addDoc(checklistCollectedRef, reportData);
+      
+      console.log('Checklist report submitted successfully:', docRef.id);
+      
+      // Clear the draft
+      await clearDraft();
+      
+      // Show success message and navigate back
+      Alert.alert(
+        'Success', 
+        'Checklist report submitted successfully!',
+        [
+          {
+            text: 'OK',
+            onPress: () => router.back()
+          }
+        ]
+      );
+      
+    } catch (error) {
+      console.error('Error submitting checklist report:', error);
+      Alert.alert('Error', 'Failed to submit report. Please try again.');
+    }
+  };
 
   const fetchLinkedItem = async () => {
     console.log('=== DEBUGGING FETCH ===');
@@ -159,7 +443,6 @@ export default function ChecklistTaskScreen() {
     <View style={styles.container}>
         <View style={styles.titleRow}>
       <Text style={styles.taskTitle}>{linkedItem?.title || task.title || 'Untitled Task'}</Text>
-      <Text style={{ fontSize: 12, color: '#666' }}>Debug: {linkedItem ? 'LinkedItem loaded' : 'Using fallback'}</Text>
           <Pressable
             onPress={() => {
               if (!companyCode) {
@@ -181,6 +464,7 @@ export default function ChecklistTaskScreen() {
           </Pressable>
         </View>
         {loading && <ActivityIndicator size="small" color="#2196F3" style={{ marginBottom: 10 }} />}
+        {isLoadingDraft && <ActivityIndicator size="small" color="#ff9800" style={{ marginBottom: 10 }} />}
         {error ? (
           <Text style={{ color: 'red', marginBottom: 10 }}>{error}</Text>
         ) : linkedItem ? (
@@ -207,7 +491,8 @@ export default function ChecklistTaskScreen() {
                   <TouchableOpacity
                     style={[styles.crossCircle, checked[idx] === 'not_completed' && styles.crossCircleChecked]}
                     activeOpacity={0.7}
-                    onPress={() => setChecked(prev => prev.map((v, i) => i === idx ? (v === 'not_completed' ? null : 'not_completed') : v))}
+                    onPress={() => !isTaskCompleted && setChecked(prev => prev.map((v, i) => i === idx ? (v === 'not_completed' ? null : 'not_completed') : v))}
+                    disabled={isTaskCompleted}
                   >
                     {checked[idx] === 'not_completed' && <Text style={styles.crossMark}>✗</Text>}
                   </TouchableOpacity>
@@ -215,7 +500,8 @@ export default function ChecklistTaskScreen() {
                   <TouchableOpacity
                     style={[styles.checkCircle, checked[idx] === 'completed' && styles.checkCircleChecked]}
                     activeOpacity={0.7}
-                    onPress={() => setChecked(prev => prev.map((v, i) => i === idx ? (v === 'completed' ? null : 'completed') : v))}
+                    onPress={() => !isTaskCompleted && setChecked(prev => prev.map((v, i) => i === idx ? (v === 'completed' ? null : 'completed') : v))}
+                    disabled={isTaskCompleted}
                   >
                     {checked[idx] === 'completed' && <Text style={styles.checkMark}>✓</Text>}
                   </TouchableOpacity>
@@ -272,12 +558,66 @@ export default function ChecklistTaskScreen() {
               )}
             </View>
           ))}
+          
+          {/* Task Completion Status */}
+          {isTaskCompleted && (
+            <View style={styles.completionStatusContainer}>
+              <View style={styles.completionStatusHeader}>
+                <Text style={styles.completionStatusTitle}>✅ Task Completed</Text>
+              </View>
+              <View style={styles.completionStatusDetails}>
+                <View style={styles.userInfoContainer}>
+                  {completedByUser?.photoURL ? (
+                    <Image 
+                      source={{ uri: completedByUser.photoURL }} 
+                      style={styles.userAvatar}
+                    />
+                  ) : (
+                    <View style={styles.userAvatarPlaceholder}>
+                      <Text style={styles.userAvatarText}>
+                        {completedByUser?.name?.charAt(0)?.toUpperCase() || 'U'}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.userTextContainer}>
+                    <Text style={styles.completionStatusText}>
+                      Completed by: {completedByUser?.name || 'Unknown User'}
+                    </Text>
+                    {completedAt && (
+                      <Text style={styles.completionStatusText}>
+                        Completed at: {new Date(completedAt).toLocaleString()}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            </View>
+          )}
+          
+          {/* Save Draft Button */}
+          {hasChanges && !isTaskCompleted && (
+            <TouchableOpacity
+              style={[styles.saveDraftButton, draftSaved && styles.saveDraftButtonSaved]}
+              activeOpacity={0.8}
+              onPress={saveDraft}
+              disabled={draftSaved}
+            >
+              <Text style={styles.saveDraftButtonText}>
+                {draftSaved ? 'Draft Saved!' : 'Save Draft'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          {/* Submit Button */}
           <TouchableOpacity
-            style={styles.submitButton}
+            style={[styles.submitButton, isTaskCompleted && styles.completedButton]}
             activeOpacity={0.8}
-            onPress={() => Alert.alert('Report Submitted', 'Your checklist report has been submitted!')}
+            onPress={isTaskCompleted ? undefined : submitReport}
+            disabled={isTaskCompleted}
           >
-            <Text style={styles.submitButtonText}>Submit Report</Text>
+            <Text style={[styles.submitButtonText, isTaskCompleted && styles.completedButtonText]}>
+              {isTaskCompleted ? 'Task Already Completed' : 'Submit Report'}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
     </View>
@@ -513,6 +853,94 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 15,
+  },
+  saveDraftButton: {
+    backgroundColor: '#ff9800',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  saveDraftButtonSaved: {
+    backgroundColor: '#4caf50',
+  },
+  saveDraftButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  completionStatusContainer: {
+    backgroundColor: '#e8f5e8',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#4caf50',
+  },
+  completionStatusHeader: {
+    marginBottom: 8,
+  },
+  completionStatusTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#2e7d32',
+  },
+  completionStatusDetails: {
+    gap: 4,
+  },
+  completionStatusText: {
+    fontSize: 14,
+    color: '#2e7d32',
+  },
+  completedButton: {
+    backgroundColor: '#9e9e9e',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  completedButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // User profile styles
+  userInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  userAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  userAvatarPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#1976D2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userAvatarText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  userTextContainer: {
+    flex: 1,
   },
 
 }); 

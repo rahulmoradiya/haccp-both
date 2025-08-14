@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, Ale
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
 import { useAuth } from '../_layout';
-import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getAuth } from 'firebase/auth';
 
@@ -18,6 +18,8 @@ export default function PersonalTaskScreen() {
   const router = useRouter();
   const { allUsers, companyCode } = useAuth();
   const task = JSON.parse(route.params.task);
+  const [isCompleted, setIsCompleted] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(true);
 
   // Find the creator's user data
   const creator = allUsers.find(user => user.uid === task.createdBy);
@@ -58,6 +60,40 @@ export default function PersonalTaskScreen() {
     }
   };
 
+  // Check if task has been completed by current user
+  React.useEffect(() => {
+    if (!companyCode || !task.id) {
+      setIsLoading(false);
+      return;
+    }
+
+    const auth = getAuth();
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setIsLoading(false);
+      return;
+    }
+
+    // Check if this task has been completed by the current user
+    const completedQuery = query(
+      collection(db, 'companies', companyCode, 'personalCollected'),
+      where('taskId', '==', task.id || task._id),
+      where('userId', '==', currentUser.uid),
+      where('actionType', '==', 'task_completed')
+    );
+
+    const unsubscribe = onSnapshot(completedQuery, (snapshot) => {
+      const hasCompleted = !snapshot.empty;
+      setIsCompleted(hasCompleted);
+      setIsLoading(false);
+    }, (error) => {
+      console.error('Error checking task completion status:', error);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [companyCode, task.id]);
+
   // Handle mark complete action
   const handleMarkComplete = () => {
     Alert.alert(
@@ -89,6 +125,7 @@ export default function PersonalTaskScreen() {
 
               // Update task status to 'completed' in local state
               task.status = 'completed';
+              setIsCompleted(true);
               
               Alert.alert('Success', 'Task marked as complete!');
             } catch (error) {
@@ -231,9 +268,27 @@ export default function PersonalTaskScreen() {
 
         {/* Action Buttons */}
         <View style={styles.actionContainer}>
-          <TouchableOpacity style={styles.actionButton} onPress={handleMarkComplete}>
-            <Text style={styles.actionButtonText}>Mark Complete</Text>
-          </TouchableOpacity>
+          {isLoading ? (
+            <View style={[styles.actionButton, styles.loadingButton]}>
+              <Text style={styles.actionButtonText}>Loading...</Text>
+            </View>
+          ) : (
+            <TouchableOpacity 
+              style={[
+                styles.actionButton, 
+                isCompleted && styles.completedButton
+              ]} 
+              onPress={handleMarkComplete}
+              disabled={isCompleted}
+            >
+              <Text style={[
+                styles.actionButtonText,
+                isCompleted && styles.completedButtonText
+              ]}>
+                {isCompleted ? 'Completed' : 'Mark Complete'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -325,6 +380,15 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  completedButton: {
+    backgroundColor: '#4caf50',
+  },
+  completedButtonText: {
+    color: '#fff',
+  },
+  loadingButton: {
+    backgroundColor: '#9e9e9e',
   },
   secondaryButton: {
     backgroundColor: '#fff',

@@ -13,7 +13,7 @@ export default function TabLayout() {
 
   return (
     <Tabs
-      initialRouteName="MonitoringPhone"
+      initialRouteName="index"
       screenOptions={{
         lazy: true,
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,

@@ -1,9 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Alert, TextInput, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, TextInput, TouchableOpacity, ScrollView, Image } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
-import { getFirestore, getDocs, collection, doc, getDoc } from 'firebase/firestore';
+import { getFirestore, getDocs, collection, doc, getDoc, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { app } from '../../firebase';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import { uploadFile, uploadTaskFile, validateFileType, formatFileSize } from '../../utils/fileUpload';
+import { storage } from '../../firebase';
 
 type DetailTaskScreenRouteProp = {
   params: {
@@ -18,7 +25,14 @@ export default function DetailTaskScreen() {
   const [companyCode, setCompanyCode] = useState<string | null>(null);
   
   // Media state
-  const [mediaAttachments, setMediaAttachments] = useState<string[]>([]);
+  const [mediaAttachments, setMediaAttachments] = useState<Array<{
+    type: 'image' | 'document';
+    url: string;
+    name: string;
+    size: number;
+    mimeType: string;
+  }>>([]);
+  const [uploading, setUploading] = useState(false);
   
   // Linked Item state
   const [linkedItemData, setLinkedItemData] = useState<any>(null);
@@ -28,8 +42,51 @@ export default function DetailTaskScreen() {
   // Dynamic fields state
   const [dynamicFields, setDynamicFields] = useState<any[]>([]);
   const [dynamicFieldValues, setDynamicFieldValues] = useState<{[key: string]: any}>({});
+  
+  // Draft functionality state
+  const [hasChanges, setHasChanges] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [isLoadingDraft, setIsLoadingDraft] = useState(true);
+  
+  // Task completion state
+  const [isTaskCompleted, setIsTaskCompleted] = useState(false);
+  const [completedBy, setCompletedBy] = useState<string | null>(null);
+  const [completedAt, setCompletedAt] = useState<string | null>(null);
+  const [isCheckingCompletion, setIsCheckingCompletion] = useState(true);
+  
+  // User profile state
+  const [completedByUser, setCompletedByUser] = useState<{ name: string; photoURL: string } | null>(null);
 
   const db = getFirestore(app);
+
+  // Function to fetch user profile data
+  const fetchUserProfile = async (userId: string) => {
+    if (!companyCode) {
+      console.log('❌ No companyCode available for fetching user profile');
+      return null;
+    }
+    
+    console.log('🔍 Fetching user profile for:', userId, 'in company:', companyCode);
+    
+    try {
+      const userRef = doc(db, 'companies', companyCode, 'users', userId);
+      const userSnap = await getDoc(userRef);
+      
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        console.log('✅ User data found:', userData);
+        return {
+          name: userData.name || userData.displayName || 'Unknown User',
+          photoURL: userData.photoURL || null,
+        };
+      } else {
+        console.log('❌ User document does not exist for ID:', userId);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching user profile:', error);
+    }
+    return null;
+  };
 
   // Function to fetch linked item data
   const fetchLinkedItemData = async () => {
@@ -65,6 +122,83 @@ export default function DetailTaskScreen() {
     }
   }, [companyCode]);
 
+  // Check if task is already completed
+  useEffect(() => {
+    const checkTaskCompletion = async () => {
+      if (!companyCode) return;
+      
+      try {
+        const taskId = task.id || task._id;
+        const detailedCollectedRef = collection(db, 'companies', companyCode, 'detailedCollected');
+        const completionQuery = query(detailedCollectedRef, where('taskId', '==', taskId));
+        const completionSnapshot = await getDocs(completionQuery);
+        
+        if (!completionSnapshot.empty) {
+          const completionData = completionSnapshot.docs[0].data() as any;
+          setIsTaskCompleted(true);
+          setCompletedBy(completionData.completedBy);
+          setCompletedAt(completionData.completedAt?.toDate?.()?.toISOString() || completionData.completedAt);
+          
+          // Fetch user profile data
+          if (completionData.completedBy) {
+            console.log('👤 Fetching profile for completedBy:', completionData.completedBy);
+            const userProfile = await fetchUserProfile(completionData.completedBy);
+            console.log('👤 User profile result:', userProfile);
+            setCompletedByUser(userProfile);
+          } else {
+            console.log('❌ No completedBy field in completion data');
+          }
+          
+          // Load the completed data into the form
+          if (completionData.fieldValues) {
+            setDynamicFieldValues(completionData.fieldValues);
+          }
+          if (completionData.mediaAttachments) {
+            setMediaAttachments(completionData.mediaAttachments);
+          }
+          
+          console.log('Task already completed by:', completionData.completedBy);
+        }
+      } catch (error) {
+        console.error('Error checking task completion:', error);
+      } finally {
+        setIsCheckingCompletion(false);
+      }
+    };
+    
+    checkTaskCompletion();
+  }, [companyCode, task.id]);
+
+  // Load draft from AsyncStorage when component mounts
+  useEffect(() => {
+    const loadDraft = async () => {
+      try {
+        const taskId = task.id || task._id;
+        const draftKey = `detail_draft_${taskId}`;
+        const savedDraft = await AsyncStorage.getItem(draftKey);
+        
+        if (savedDraft) {
+          const draftData = JSON.parse(savedDraft);
+          setDynamicFieldValues(draftData.fieldValues || {});
+          setMediaAttachments(draftData.mediaAttachments || []);
+          console.log('Detail task draft loaded:', draftData);
+        }
+      } catch (error) {
+        console.error('Error loading detail task draft:', error);
+      } finally {
+        setIsLoadingDraft(false);
+      }
+    };
+    
+    loadDraft();
+  }, [task.id]);
+
+  // Check for changes in form data
+  useEffect(() => {
+    const hasAnyChanges = Object.keys(dynamicFieldValues).length > 0 || mediaAttachments.length > 0;
+    setHasChanges(hasAnyChanges);
+  }, [dynamicFieldValues, mediaAttachments]);
+
   // Get company code from current user
   useEffect(() => {
     const fetchCompanyCode = async () => {
@@ -90,8 +224,225 @@ export default function DetailTaskScreen() {
     fetchCompanyCode();
   }, []);
 
-  const addMediaAttachment = () => {
-    Alert.alert('Media Attachment', 'Camera/Gallery functionality would be implemented here');
+  const handleAttachmentPress = () => {
+    Alert.alert(
+      'Add Attachment',
+      'Choose an option',
+      [
+        {
+          text: 'Camera',
+          onPress: () => handleImagePicker('camera'),
+        },
+        {
+          text: 'Photo Library',
+          onPress: () => handleImagePicker('library'),
+        },
+        {
+          text: 'Document',
+          onPress: () => handleDocumentPicker(),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
+  const handleImagePicker = async (source: 'camera' | 'library') => {
+    try {
+      setUploading(true);
+      
+      // Request permissions
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission needed', 'Camera permission is required to take photos');
+          return;
+        }
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission needed', 'Photo library permission is required');
+          return;
+        }
+      }
+
+      const result = source === 'camera' 
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.8,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 0.8,
+          });
+
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        await handleFileUpload(asset.uri, asset.fileName || 'image.jpg', asset.mimeType || 'image/jpeg');
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to pick image');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDocumentPicker = async () => {
+    try {
+      setUploading(true);
+      
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        if (!validateFileType(asset.mimeType || '')) {
+          Alert.alert('Invalid file type', 'Please select a supported file type');
+          return;
+        }
+        await handleFileUpload(asset.uri, asset.name, asset.mimeType || 'application/octet-stream');
+      }
+    } catch (error) {
+      console.error('Error picking document:', error);
+      Alert.alert('Error', 'Failed to pick document');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFileUpload = async (uri: string, fileName: string, mimeType: string) => {
+    try {
+      console.log('🎯 DetailTaskScreen: Starting file processing');
+      
+      // For now, store media locally without uploading to Firebase
+      // This allows the functionality to work while we debug the upload issue
+      
+      // Get file info
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      const fileSize = fileInfo.exists ? (fileInfo as any).size || 0 : 0;
+      
+      console.log('🎯 DetailTaskScreen: File info:', { fileSize, exists: fileInfo.exists });
+
+      const attachment: {
+        type: 'image' | 'document';
+        url: string;
+        name: string;
+        size: number;
+        mimeType: string;
+        localUri?: string; // Add local URI for temporary storage
+      } = {
+        type: mimeType.startsWith('image/') ? 'image' : 'document',
+        url: uri, // Use local URI for now
+        name: fileName,
+        size: fileSize,
+        mimeType: mimeType,
+        localUri: uri, // Store local URI for later upload
+      };
+
+      setMediaAttachments(prev => [...prev, attachment]);
+      
+      console.log('🎯 DetailTaskScreen: Media added locally:', attachment);
+      Alert.alert('Success', 'Media added successfully! (Stored locally)');
+
+    } catch (error) {
+      console.error('Error processing file:', error);
+      Alert.alert('Error', 'Failed to process file. Please try again.');
+    }
+  };
+
+  const removeMediaAttachment = (index: number) => {
+    setMediaAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Save draft function
+  const saveDraft = async () => {
+    try {
+      const taskId = task.id || task._id;
+      const draftKey = `detail_draft_${taskId}`;
+      const draftData = {
+        taskId: taskId,
+        fieldValues: dynamicFieldValues,
+        mediaAttachments: mediaAttachments,
+        timestamp: new Date().toISOString(),
+      };
+      
+      await AsyncStorage.setItem(draftKey, JSON.stringify(draftData));
+      console.log('Detail task draft saved to AsyncStorage:', draftData);
+      setDraftSaved(true);
+      
+      // Show success message
+      Alert.alert('Success', 'Draft saved successfully!');
+      
+      // Reset the saved indicator after 3 seconds
+      setTimeout(() => setDraftSaved(false), 3000);
+    } catch (error) {
+      console.error('Error saving detail task draft:', error);
+      Alert.alert('Error', 'Failed to save draft. Please try again.');
+    }
+  };
+
+  // Clear draft when task is completed
+  const clearDraft = async () => {
+    try {
+      const taskId = task.id || task._id;
+      const draftKey = `detail_draft_${taskId}`;
+      await AsyncStorage.removeItem(draftKey);
+      console.log('Detail task draft cleared for task:', taskId);
+    } catch (error) {
+      console.error('Error clearing detail task draft:', error);
+    }
+  };
+
+  // Submit report to Firebase
+  const submitReport = async () => {
+    if (!companyCode) {
+      Alert.alert('Error', 'Company code not available');
+      return;
+    }
+
+    const auth = getAuth(app);
+    const currentUser = auth.currentUser;
+    
+    if (!currentUser) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+
+    try {
+      // Prepare report data
+      const reportData = {
+        taskId: task.id || task._id,
+        taskTitle: task.title,
+        linkedItemId: task.linkedItemId,
+        fieldValues: dynamicFieldValues,
+        mediaAttachments: mediaAttachments,
+        completedBy: currentUser.uid,
+        completedAt: serverTimestamp(),
+        companyCode: companyCode,
+        totalFields: Object.keys(dynamicFieldValues).length,
+        hasMediaAttachments: mediaAttachments.length > 0,
+        mediaCount: mediaAttachments.length,
+      };
+
+      // Save to Firebase
+      const detailedCollectedRef = collection(db, 'companies', companyCode, 'detailedCollected');
+      await addDoc(detailedCollectedRef, reportData);
+
+      // Clear the draft
+      await clearDraft();
+
+      Alert.alert('Success', 'Report submitted successfully!');
+      router.back();
+    } catch (error) {
+      console.error('Error submitting report:', error);
+      Alert.alert('Error', 'Failed to submit report. Please try again.');
+    }
   };
 
   // Function to update a specific field value (no automatic unit conversion)
@@ -169,6 +520,7 @@ export default function DetailTaskScreen() {
                 })}
                 keyboardType="numeric"
                 placeholderTextColor="#999"
+                editable={!isTaskCompleted}
               />
               <View style={styles.unitContainer}>
                 <TouchableOpacity
@@ -221,6 +573,7 @@ export default function DetailTaskScreen() {
                 })}
                 keyboardType="numeric"
                 placeholderTextColor="#999"
+                editable={!isTaskCompleted}
               />
               {!!configuredUnit && (
                 <View style={styles.unitContainer}>
@@ -272,6 +625,7 @@ export default function DetailTaskScreen() {
                 })}
                 keyboardType="numeric"
                 placeholderTextColor="#999"
+                editable={!isTaskCompleted}
               />
               {!!numericUnit && (
                 <View style={styles.unitContainer}>
@@ -309,6 +663,7 @@ export default function DetailTaskScreen() {
                 })}
                 multiline
                 placeholderTextColor="#999"
+                editable={!isTaskCompleted}
               />
             </View>
           </View>
@@ -337,6 +692,7 @@ export default function DetailTaskScreen() {
                 <TouchableOpacity
                   style={styles.selectAllButton}
                   onPress={() => {
+                    if (isTaskCompleted) return;
                     const newSelectedOptions: {[key: string]: boolean} = {};
                     if (allSelected) {
                       // Deselect all
@@ -350,6 +706,7 @@ export default function DetailTaskScreen() {
                       selectedOptions: newSelectedOptions
                     });
                   }}
+                  disabled={isTaskCompleted}
                 >
                   <View style={[
                     styles.checkbox,
@@ -373,6 +730,7 @@ export default function DetailTaskScreen() {
                     selectedOptions[option] && styles.multipleOptionSelected
                   ]}
                   onPress={() => {
+                    if (isTaskCompleted) return;
                     const currentOptions = selectedOptions;
                     updateFieldValue(fieldId, {
                       ...fieldValue,
@@ -382,6 +740,7 @@ export default function DetailTaskScreen() {
                       }
                     });
                   }}
+                  disabled={isTaskCompleted}
                 >
                   <View style={[
                     styles.checkbox,
@@ -451,6 +810,7 @@ export default function DetailTaskScreen() {
                   product: value
                 })}
                 placeholderTextColor="#999"
+                editable={!isTaskCompleted}
               />
             </View>
           </View>
@@ -483,18 +843,68 @@ export default function DetailTaskScreen() {
               <TouchableOpacity
                 style={styles.addMediaButton}
                 onPress={() => {
-                  Alert.alert('Media Attachment', 'Camera/Gallery functionality would be implemented here');
-                  updateFieldValue(fieldId, {
-                    ...fieldValue,
-                    mediaAttachments: [...(fieldValue.mediaAttachments || []), 'new_media_url']
-                  });
+                  if (isTaskCompleted) return;
+                  handleAttachmentPress();
                 }}
+                disabled={isTaskCompleted || uploading}
               >
-                <Text style={styles.addMediaButtonText}>+ Add Media</Text>
+                {uploading ? (
+                  <Text style={styles.addMediaButtonText}>Uploading...</Text>
+                ) : (
+                  <Text style={styles.addMediaButtonText}>+ Add Media</Text>
+                )}
               </TouchableOpacity>
-              {(fieldValue.mediaAttachments || []).map((media: string, mediaIndex: number) => (
+              
+              {/* Display uploaded media attachments */}
+              {mediaAttachments.map((attachment, mediaIndex) => (
                 <View key={mediaIndex} style={styles.mediaPreview}>
-                  <Text>Media {mediaIndex + 1}</Text>
+                  {attachment.type === 'image' ? (
+                    <View style={styles.mediaItemContainer}>
+                      <Image 
+                        source={{ uri: attachment.url }} 
+                        style={styles.mediaPreviewImage}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.mediaInfo}>
+                        <Text style={styles.mediaName} numberOfLines={1}>
+                          {attachment.name}
+                        </Text>
+                        <Text style={styles.mediaSize}>
+                          {formatFileSize(attachment.size)}
+                        </Text>
+                      </View>
+                      {!isTaskCompleted && (
+                        <TouchableOpacity
+                          style={styles.removeMediaButton}
+                          onPress={() => removeMediaAttachment(mediaIndex)}
+                        >
+                          <Text style={styles.removeMediaButtonText}>×</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ) : (
+                    <View style={styles.mediaItemContainer}>
+                      <View style={styles.documentIcon}>
+                        <Text style={styles.documentIconText}>📄</Text>
+                      </View>
+                      <View style={styles.mediaInfo}>
+                        <Text style={styles.mediaName} numberOfLines={1}>
+                          {attachment.name}
+                        </Text>
+                        <Text style={styles.mediaSize}>
+                          {formatFileSize(attachment.size)}
+                        </Text>
+                      </View>
+                      {!isTaskCompleted && (
+                        <TouchableOpacity
+                          style={styles.removeMediaButton}
+                          onPress={() => removeMediaAttachment(mediaIndex)}
+                        >
+                          <Text style={styles.removeMediaButtonText}>×</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
                 </View>
               ))}
             </View>
@@ -586,12 +996,64 @@ export default function DetailTaskScreen() {
         {/* Dynamic Form Cards */}
         {dynamicFields.map((field, index) => renderDynamicCard(field, index))}
 
+        {/* Save Draft Button */}
+        {hasChanges && !isTaskCompleted && (
+          <TouchableOpacity
+            style={[styles.saveDraftButton, draftSaved && styles.saveDraftButtonSaved]}
+            activeOpacity={0.8}
+            onPress={saveDraft}
+            disabled={draftSaved}
+          >
+            <Text style={styles.saveDraftButtonText}>
+              {draftSaved ? 'Draft Saved!' : 'Save Draft'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Task Completion Status */}
+        {isTaskCompleted && (
+          <View style={styles.completionStatusContainer}>
+            <View style={styles.completionStatusHeader}>
+              <Text style={styles.completionStatusTitle}>✅ Task Completed</Text>
+            </View>
+            <View style={styles.completionStatusDetails}>
+              <View style={styles.userInfoContainer}>
+                {completedByUser?.photoURL ? (
+                  <Image 
+                    source={{ uri: completedByUser.photoURL }} 
+                    style={styles.userAvatar}
+                  />
+                ) : (
+                  <View style={styles.userAvatarPlaceholder}>
+                    <Text style={styles.userAvatarText}>
+                      {completedByUser?.name?.charAt(0)?.toUpperCase() || 'U'}
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.userTextContainer}>
+                  <Text style={styles.completionStatusText}>
+                    Completed by: {completedByUser?.name || 'Unknown User'}
+                  </Text>
+                  {completedAt && (
+                    <Text style={styles.completionStatusText}>
+                      Completed at: {new Date(completedAt).toLocaleString()}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Submit Button */}
         <TouchableOpacity
-          style={styles.submitButton}
-          onPress={() => Alert.alert('Submit', 'Data collection completed!')}
+          style={[styles.submitButton, isTaskCompleted && styles.completedButton]}
+          onPress={isTaskCompleted ? undefined : submitReport}
+          disabled={isTaskCompleted}
         >
-          <Text style={styles.submitButtonText}>Submit Data</Text>
+          <Text style={[styles.submitButtonText, isTaskCompleted && styles.completedButtonText]}>
+            {isTaskCompleted ? 'Task Already Completed' : 'Submit Report'}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </>
@@ -1087,5 +1549,140 @@ const styles = StyleSheet.create({
     color: '#1976D2',
     fontWeight: '600',
     marginLeft: 8,
+  },
+  saveDraftButton: {
+    backgroundColor: '#ff9800',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  saveDraftButtonSaved: {
+    backgroundColor: '#4caf50',
+  },
+  saveDraftButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Task completion status styles
+  completionStatusContainer: {
+    backgroundColor: '#e8f5e8',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#4caf50',
+  },
+  completionStatusHeader: {
+    marginBottom: 8,
+  },
+  completionStatusTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#2e7d32',
+  },
+  completionStatusDetails: {
+    gap: 4,
+  },
+  completionStatusText: {
+    fontSize: 14,
+    color: '#388e3c',
+  },
+  // Completed button styles
+  completedButton: {
+    backgroundColor: '#9e9e9e',
+  },
+  completedButtonText: {
+    color: '#fff',
+  },
+  // User profile styles
+  userInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  userAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  userAvatarPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#1976D2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userAvatarText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  userTextContainer: {
+    flex: 1,
+  },
+  // Media attachment styles
+  mediaItemContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 4,
+  },
+  mediaPreviewImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  mediaInfo: {
+    flex: 1,
+  },
+  mediaName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 2,
+  },
+  mediaSize: {
+    fontSize: 12,
+    color: '#666',
+  },
+  removeMediaButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#f44336',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  removeMediaButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  documentIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  documentIconText: {
+    fontSize: 24,
   },
 }); 
