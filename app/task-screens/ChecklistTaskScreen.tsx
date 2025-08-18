@@ -11,6 +11,7 @@ import { Stack, useRouter } from 'expo-router';
 type ChecklistTaskScreenRouteProp = {
   params: {
     task: string;
+    selectedDate?: string;
   };
 };
 
@@ -137,15 +138,23 @@ export default function ChecklistTaskScreen() {
     }
   }, [companyCode]);
 
-  // Check if task is already completed
+  // Check if task is already completed for the specific date
   useEffect(() => {
     const checkTaskCompletion = async () => {
       if (!companyCode) return;
       
       try {
         const taskId = task.id || task._id;
+        // Use the date passed from the navigation params, or default to today
+        const targetDate = route.params?.selectedDate || new Date().toISOString().split('T')[0];
+        
         const checklistCollectedRef = collection(db, 'companies', companyCode, 'checklistCollected');
-        const completionQuery = query(checklistCollectedRef, where('taskId', '==', taskId));
+        // Check for completion on the specific date
+        const completionQuery = query(
+          checklistCollectedRef, 
+          where('taskId', '==', taskId),
+          where('completionDate', '==', targetDate)
+        );
         const completionSnapshot = await getDocs(completionQuery);
         
         if (!completionSnapshot.empty) {
@@ -184,7 +193,9 @@ export default function ChecklistTaskScreen() {
             setDeviations(adjustedDeviations.slice(0, checklist.length));
           }
           
-          console.log('Task already completed by:', completionData.completedBy);
+          console.log('Checklist task already completed for date:', targetDate, 'by:', completionData.completedBy);
+        } else {
+          console.log('Checklist task not completed for target date:', targetDate);
         }
       } catch (error) {
         console.error('Error checking task completion:', error);
@@ -237,6 +248,28 @@ export default function ChecklistTaskScreen() {
     
     loadDraft();
   }, [task.id]);
+
+  // Sync arrays when checklist changes
+  useEffect(() => {
+    console.log('Checklist changed, syncing arrays. Checklist length:', checklist.length, 'Checked length:', checked.length);
+    if (checked.length !== checklist.length || deviations.length !== checklist.length) {
+      console.log('Array length mismatch detected, adjusting arrays');
+      
+      // Adjust checked array
+      const newChecked = [...checked];
+      while (newChecked.length < checklist.length) {
+        newChecked.push(null);
+      }
+      setChecked(newChecked.slice(0, checklist.length));
+      
+      // Adjust deviations array
+      const newDeviations = [...deviations];
+      while (newDeviations.length < checklist.length) {
+        newDeviations.push('');
+      }
+      setDeviations(newDeviations.slice(0, checklist.length));
+    }
+  }, [checklist.length]);
 
   // Check for changes in checklist
   useEffect(() => {
@@ -304,20 +337,19 @@ export default function ChecklistTaskScreen() {
       console.log('Checklist status:', checked);
       
       // Ensure checked array matches checklist length
-      if (checked.length !== checklist.length) {
-        console.log('Array length mismatch, initializing checked array');
-        setChecked(prev => {
-          const newChecked = [...prev];
-          while (newChecked.length < checklist.length) {
-            newChecked.push(null);
-          }
-          return newChecked.slice(0, checklist.length);
-        });
-        Alert.alert('Error', 'Please try submitting again after the form updates.');
-        return;
+      let currentChecked = [...checked];
+      if (currentChecked.length !== checklist.length) {
+        console.log('Array length mismatch, adjusting checked array');
+        // Adjust array length to match checklist
+        while (currentChecked.length < checklist.length) {
+          currentChecked.push(null);
+        }
+        currentChecked = currentChecked.slice(0, checklist.length);
+        // Update state for future use, but continue with submission using adjusted array
+        setChecked(currentChecked);
       }
       
-      const incompleteItems = checked.filter(status => status === null);
+      const incompleteItems = currentChecked.filter(status => status === null);
       console.log('Incomplete items count:', incompleteItems.length);
       
       if (incompleteItems.length > 0) {
@@ -329,24 +361,26 @@ export default function ChecklistTaskScreen() {
         return;
       }
 
-      // Prepare the report data
+      // Prepare the report data with completion date
+      const targetDate = route.params?.selectedDate || new Date().toISOString().split('T')[0]; // Use selected date or today
       const reportData = {
         taskId: task.id || task._id,
         taskTitle: task.title || 'Untitled Task',
         taskType: 'checklist',
         checklistItems: checklist.map((item, index) => ({
           title: item.title,
-          status: checked[index],
+          status: currentChecked[index],
           deviation: deviations[index] || null,
         })),
         completedBy: currentUser.uid,
         completedAt: serverTimestamp(),
+        completionDate: targetDate, // Add the specific date for this completion
         companyCode: companyCode,
         linkedItemId: task.linkedItemId || null,
         linkedItemTitle: linkedItem?.title || null,
         totalItems: checklist.length,
-        completedItems: checked.filter(status => status === 'completed').length,
-        notCompletedItems: checked.filter(status => status === 'not_completed').length,
+        completedItems: currentChecked.filter(status => status === 'completed').length,
+        notCompletedItems: currentChecked.filter(status => status === 'not_completed').length,
         hasDeviations: deviations.some(deviation => deviation.trim() !== ''),
         deviations: deviations.filter(deviation => deviation.trim() !== ''),
       };
