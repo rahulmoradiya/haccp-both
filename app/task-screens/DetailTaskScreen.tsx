@@ -15,6 +15,7 @@ import { storage } from '../../firebase';
 type DetailTaskScreenRouteProp = {
   params: {
     task: string;
+    selectedDate?: string;
   };
 };
 
@@ -122,15 +123,23 @@ export default function DetailTaskScreen() {
     }
   }, [companyCode]);
 
-  // Check if task is already completed
+  // Check if task is already completed for the specific date
   useEffect(() => {
     const checkTaskCompletion = async () => {
       if (!companyCode) return;
       
       try {
         const taskId = task.id || task._id;
+        // Use the date passed from the navigation params, or default to today
+        const targetDate = route.params?.selectedDate || new Date().toISOString().split('T')[0];
+        
         const detailedCollectedRef = collection(db, 'companies', companyCode, 'detailedCollected');
-        const completionQuery = query(detailedCollectedRef, where('taskId', '==', taskId));
+        // Check for completion on the current date
+        const completionQuery = query(
+          detailedCollectedRef, 
+          where('taskId', '==', taskId),
+          where('completionDate', '==', targetDate)
+        );
         const completionSnapshot = await getDocs(completionQuery);
         
         if (!completionSnapshot.empty) {
@@ -157,7 +166,9 @@ export default function DetailTaskScreen() {
             setMediaAttachments(completionData.mediaAttachments);
           }
           
-          console.log('Task already completed by:', completionData.completedBy);
+          console.log('Task already completed for date:', targetDate, 'by:', completionData.completedBy);
+        } else {
+          console.log('Task not completed for target date:', targetDate);
         }
       } catch (error) {
         console.error('Error checking task completion:', error);
@@ -415,7 +426,8 @@ export default function DetailTaskScreen() {
     }
 
     try {
-      // Prepare report data
+      // Prepare report data with completion date
+      const targetDate = route.params?.selectedDate || new Date().toISOString().split('T')[0]; // Use selected date or today
       const reportData = {
         taskId: task.id || task._id,
         taskTitle: task.title,
@@ -424,6 +436,7 @@ export default function DetailTaskScreen() {
         mediaAttachments: mediaAttachments,
         completedBy: currentUser.uid,
         completedAt: serverTimestamp(),
+        completionDate: targetDate, // Add the specific date for this completion
         companyCode: companyCode,
         totalFields: Object.keys(dynamicFieldValues).length,
         hasMediaAttachments: mediaAttachments.length > 0,
@@ -444,6 +457,8 @@ export default function DetailTaskScreen() {
       Alert.alert('Error', 'Failed to submit report. Please try again.');
     }
   };
+
+
 
   // Function to update a specific field value (no automatic unit conversion)
   const updateFieldValue = (fieldId: string, value: any) => {
@@ -1044,6 +1059,8 @@ export default function DetailTaskScreen() {
             </View>
           </View>
         )}
+
+
 
         {/* Submit Button */}
         <TouchableOpacity

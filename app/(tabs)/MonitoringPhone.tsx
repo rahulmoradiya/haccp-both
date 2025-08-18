@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, SafeAreaView, TouchableOpacity, Modal, Pressable, ScrollView, Platform } from 'react-native';
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, SafeAreaView, TouchableOpacity, Modal, Pressable, ScrollView } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { collection, getDocs, query, getFirestore } from 'firebase/firestore';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
@@ -26,7 +26,7 @@ interface Task {
 
 export default function MonitoringPhone() {
   const router = useRouter();
-  const insets = useSafeAreaInsets ? useSafeAreaInsets() : { bottom: 0 };
+  const insets = useSafeAreaInsets();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -37,7 +37,13 @@ export default function MonitoringPhone() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendarTaskCounts, setCalendarTaskCounts] = useState<{ [date: string]: number }>({});
   const [calendarMonth, setCalendarMonth] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(() => {
+    // Initialize with today's date in YYYY-MM-DD format
+    const today = new Date();
+    const todayString = today.toISOString().split('T')[0];
+    console.log('Initializing selectedDate with:', todayString);
+    return todayString;
+  });
   const [modalVisible, setModalVisible] = useState(false);
   const [filteredTasks, setFilteredTasks] = useState<Task[] | null>(null);
   const [filterModalVisible, setFilterModalVisible] = useState(false);
@@ -263,7 +269,13 @@ export default function MonitoringPhone() {
       <TouchableOpacity
         style={styles.taskCard}
         activeOpacity={0.8}
-        onPress={() => router.push({ pathname: screen, params: { task: JSON.stringify(item) } })}
+        onPress={() => router.push({ 
+          pathname: screen, 
+          params: { 
+            task: JSON.stringify(item),
+            selectedDate: selectedDate // Pass the selected date to the task screen
+          } 
+        })}
       >
       <View style={styles.taskHeader}>
         <Text style={styles.taskTitle}>{item.title || 'Untitled Task'}</Text>
@@ -312,6 +324,15 @@ export default function MonitoringPhone() {
     return date.toLocaleDateString();
   };
 
+  // Format date for display in header (YYYY-MM-DD format)
+  const formatDateForHeader = (dateString: string) => {
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   // Helper: get all days in a month
   const getDaysInMonth = (year: number, month: number) => {
     const firstDay = new Date(year, month, 1);
@@ -337,29 +358,49 @@ export default function MonitoringPhone() {
     setCalendarTaskCounts(counts);
   }, [tasks, calendarMonth]);
 
+  // Load tasks for selected date when tasks are loaded or selected date changes
+  useEffect(() => {
+    if (selectedDate && tasks.length > 0) {
+      setFilteredTasks(getTasksForDate(selectedDate));
+    }
+  }, [selectedDate, tasks]);
+
+  // Debug effect to log selectedDate changes
+  useEffect(() => {
+    console.log('selectedDate changed to:', selectedDate);
+  }, [selectedDate]);
+
   // Helper to get tasks for a specific date
   const getTasksForDate = (dateString: string) => {
     return tasks.filter(task => {
       if (!task.dueDate) return false;
+      
       // For teamMemberTasks, treat as one-time tasks on dueDate
       if (task.type === 'teamMember') {
         return dateString === task.dueDate;
       }
+      
       if (!task.frequency) return false;
       const freq = (task.frequency || '').toLowerCase();
       const due = new Date(task.dueDate);
       const day = new Date(dateString);
-      if (freq === 'once a day') {
+      
+      if (freq === 'once a day' || freq === 'daily') {
+        // Daily tasks appear every day starting from the due date
         return day >= due;
-      } else if (freq === 'once a week') {
+      } else if (freq === 'once a week' || freq === 'weekly') {
+        // Weekly tasks appear on the same day of week, starting from due date
         return day >= due && day.getDay() === due.getDay();
-      } else if (freq === 'once a month') {
-        return day.getDate() === due.getDate();
-      } else if (freq === 'once a year') {
-        return day.getDate() === due.getDate() && day.getMonth() === due.getMonth();
+      } else if (freq === 'once a month' || freq === 'monthly') {
+        // Monthly tasks appear on the same date each month, starting from due date
+        return day >= due && day.getDate() === due.getDate();
+      } else if (freq === 'once a year' || freq === 'yearly') {
+        // Yearly tasks appear on the same date each year, starting from due date
+        return day >= due && day.getDate() === due.getDate() && day.getMonth() === due.getMonth();
       } else if ([
         'one-time task', 'one time task', 'one-time', 'one time'
       ].includes(freq)) {
+        // One-time tasks only appear on their due date
         return dateString === task.dueDate;
       }
       return false;
@@ -414,11 +455,35 @@ export default function MonitoringPhone() {
     return (
       <View style={styles.calendarContainer}>
         <View style={styles.calendarHeader}>
-          <TouchableOpacity onPress={() => setCalendarMonth(new Date(year, month - 1, 1))}>
+          <TouchableOpacity onPress={() => {
+            const newMonth = new Date(year, month - 1, 1);
+            setCalendarMonth(newMonth);
+            // If selected date is not in the new month, reset to first day of new month
+            if (selectedDate) {
+              const selectedDateObj = new Date(selectedDate);
+              if (selectedDateObj.getMonth() !== newMonth.getMonth() || selectedDateObj.getFullYear() !== newMonth.getFullYear()) {
+                const firstDayOfNewMonth = newMonth.toISOString().split('T')[0];
+                setSelectedDate(firstDayOfNewMonth);
+                setFilteredTasks(getTasksForDate(firstDayOfNewMonth));
+              }
+            }
+          }}>
             <Text style={styles.calendarNav}>{'<'}</Text>
           </TouchableOpacity>
           <Text style={styles.calendarMonth}>{monthNames[month]} {year}</Text>
-          <TouchableOpacity onPress={() => setCalendarMonth(new Date(year, month + 1, 1))}>
+          <TouchableOpacity onPress={() => {
+            const newMonth = new Date(year, month + 1, 1);
+            setCalendarMonth(newMonth);
+            // If selected date is not in the new month, reset to first day of new month
+            if (selectedDate) {
+              const selectedDateObj = new Date(selectedDate);
+              if (selectedDateObj.getMonth() !== newMonth.getMonth() || selectedDateObj.getFullYear() !== newMonth.getFullYear()) {
+                const firstDayOfNewMonth = newMonth.toISOString().split('T')[0];
+                setSelectedDate(firstDayOfNewMonth);
+                setFilteredTasks(getTasksForDate(firstDayOfNewMonth));
+              }
+            }
+          }}>
             <Text style={styles.calendarNav}>{'>'}</Text>
           </TouchableOpacity>
         </View>
@@ -458,10 +523,38 @@ export default function MonitoringPhone() {
 
   // When a date is selected, filter tasks for that date
   const handleDateSelect = (dateString: string) => {
+    console.log('Date selected:', dateString);
+    console.log('Previous selectedDate:', selectedDate);
     setSelectedDate(dateString);
+    console.log('New selectedDate set to:', dateString);
     setModalVisible(true);
     setFilteredTasks(getTasksForDate(dateString));
   };
+  
+  // Navigate to previous date
+  const goToPreviousDate = () => {
+    if (selectedDate) {
+      const currentDate = new Date(selectedDate);
+      const previousDate = new Date(currentDate);
+      previousDate.setDate(currentDate.getDate() - 1);
+      const previousDateString = previousDate.toISOString().split('T')[0];
+      setSelectedDate(previousDateString);
+      setFilteredTasks(getTasksForDate(previousDateString));
+    }
+  };
+
+  // Navigate to next date
+  const goToNextDate = () => {
+    if (selectedDate) {
+      const currentDate = new Date(selectedDate);
+      const nextDate = new Date(currentDate);
+      nextDate.setDate(currentDate.getDate() + 1);
+      const nextDateString = nextDate.toISOString().split('T')[0];
+      setSelectedDate(nextDateString);
+      setFilteredTasks(getTasksForDate(nextDateString));
+    }
+  };
+
   // When modal is closed, reset filteredTasks
   const handleModalClose = () => {
     setModalVisible(false);
@@ -490,9 +583,27 @@ export default function MonitoringPhone() {
       <Text style={styles.screenTitle}>Monitoring Hub</Text>
       {selectedDate && (
         <View style={styles.selectedDateContainer}>
-          <Text style={styles.selectedDateText}>
-            Tasks for {new Date(selectedDate).toLocaleDateString()}
-          </Text>
+          <View style={styles.dateNavigationContainer}>
+            <TouchableOpacity 
+              style={styles.dateNavButton} 
+              onPress={goToPreviousDate}
+              disabled={!selectedDate}
+            >
+              <Text style={styles.dateNavButtonText}>‹</Text>
+            </TouchableOpacity>
+            
+            <Text style={styles.selectedDateText}>
+              Tasks for {selectedDate}
+            </Text>
+            
+            <TouchableOpacity 
+              style={styles.dateNavButton} 
+              onPress={goToNextDate}
+              disabled={!selectedDate}
+            >
+              <Text style={styles.dateNavButtonText}>›</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
       <TouchableOpacity onPress={() => setShowCalendar(!showCalendar)} style={styles.calendarToggle}>
@@ -548,14 +659,16 @@ export default function MonitoringPhone() {
       </Modal>
       
       <FlatList
-        data={getFilteredTasks()}
+        data={selectedDate ? getTasksForDate(selectedDate) : getFilteredTasks()}
         renderItem={renderTask}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.taskList}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No tasks found</Text>
+            <Text style={styles.emptyText}>
+              {selectedDate ? `No tasks found for ${selectedDate}` : 'No tasks found'}
+            </Text>
           </View>
         }
       />
@@ -892,5 +1005,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1976D2',
+  },
+  dateNavigationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  dateNavButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2196F3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 8,
+  },
+  dateNavButtonText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
   },
 });
