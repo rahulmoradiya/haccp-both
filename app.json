@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "test123",
-    "slug": "test123",
+    "name": "Monitoring Nest",
+    "slug": "monitoring-nest",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "test123",
+    "scheme": "monitoring-nest",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
