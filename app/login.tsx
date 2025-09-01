@@ -2,8 +2,7 @@
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import MonitoringLogo from '@/components/MonitoringLogo';
-import { Stack } from 'expo-router';
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { Stack, router } from 'expo-router';
 import React, { useState } from 'react';
 import { 
   StyleSheet, 
@@ -15,36 +14,47 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Dimensions
+  Dimensions,
+  Modal,
+  Alert
 } from 'react-native';
-import { app } from '../firebase';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
+import { authenticateUser, SignInData } from '../utils/signInUtils';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showWebView, setShowWebView] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please enter both email and password.');
-      return;
-    }
-    
     setError('');
     setIsLoading(true);
     
-    try {
-      const auth = getAuth(app);
-      await signInWithEmailAndPassword(auth, email, password);
-      console.log('✅ Login successful');
-      // The auth context will automatically handle the state change
-    } catch (err: any) {
-      console.error('❌ Login failed:', err);
-      setError(err.message || 'Login failed.');
-    } finally {
-      setIsLoading(false);
+    const signInData: SignInData = {
+      email,
+      password
+    };
+    
+    const result = await authenticateUser(signInData);
+    
+    if (!result.success) {
+      setError(result.error || 'Login failed.');
     }
+    // If successful, the auth context will automatically handle the state change
+    
+    setIsLoading(false);
+  };
+
+  const handleSignUp = () => {
+    setShowWebView(true);
+  };
+
+  const closeWebView = () => {
+    setShowWebView(false);
   };
 
   return (
@@ -118,6 +128,13 @@ export default function LoginScreen() {
                 <Text style={styles.loginButtonText}>Sign In</Text>
               )}
             </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.signUpButton}
+              onPress={handleSignUp}
+            >
+              <Text style={styles.signUpButtonText}>Sign Up</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Footer */}
@@ -131,6 +148,62 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* WebView Modal */}
+      <Modal
+        visible={showWebView}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeWebView}
+        supportedOrientations={['portrait', 'landscape']}
+        statusBarTranslucent={true}
+      >
+        <KeyboardAvoidingView 
+          style={[styles.webViewContainer, { paddingTop: insets.top }]} 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.webViewHeader}>
+            <Text style={styles.webViewTitle}>Sign Up</Text>
+            <TouchableOpacity 
+              style={styles.closeButton}
+              onPress={closeWebView}
+            >
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <WebView
+            source={{ uri: 'https://www.monitoringnest.com/login' }}
+            style={styles.webView}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={true}
+            scalesPageToFit={true}
+            keyboardDisplayRequiresUserAction={false}
+            hideKeyboardAccessoryView={false}
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
+            allowsBackForwardNavigationGestures={true}
+            mixedContentMode="compatibility"
+            thirdPartyCookiesEnabled={true}
+            sharedCookiesEnabled={true}
+            textInteractionEnabled={true}
+            onError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.warn('WebView error: ', nativeEvent);
+            }}
+            onHttpError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.warn('WebView HTTP error: ', nativeEvent);
+            }}
+            onLoadStart={() => {
+              console.log('WebView started loading');
+            }}
+            onLoadEnd={() => {
+              console.log('WebView finished loading');
+            }}
+          />
+        </KeyboardAvoidingView>
+      </Modal>
     </>
   );
 }
@@ -259,6 +332,31 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  signUpButton: {
+    width: '100%',
+    height: 56,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#3B82F6',
+    marginTop: 12,
+    shadowColor: '#3B82F6',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+
+  signUpButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3B82F6',
+  },
   footerSection: {
     alignItems: 'center',
     marginTop: 24,
@@ -271,5 +369,40 @@ const styles = StyleSheet.create({
   footerSubtext: {
     fontSize: 12,
     color: '#9CA3AF',
+  },
+  webViewContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  webViewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  webViewTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: 'bold',
+  },
+  webView: {
+    flex: 1,
   },
 }); 
